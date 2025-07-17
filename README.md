@@ -1,3 +1,4 @@
+
 # Progetto Server SHA-256 con IPC
 
 Questo progetto implementa un sistema client-server per il calcolo dell'hash SHA-256 di file multipli, sfruttando i meccanismi di comunicazione inter-processo (IPC) disponibili su Linux/macOS. Il sistema è pensato per essere robusto, scalabile e facilmente estendibile.
@@ -78,23 +79,45 @@ Il client supporta tre modalità operative:
 
 - `server.c`: Codice sorgente del server.
 - `client.c`: Codice sorgente del client.
-- `readme.md`: Documentazione.
+- `Makefile`: Script per compilare server e client.
+- `README.md`: Documentazione.
 
 ---
 
 ## Prerequisiti
 
-- Compilatore C (es. `gcc`)
-- Librerie di sviluppo OpenSSL (`libssl-dev`)
+- Compilatore C (`gcc`)
+- Librerie di sviluppo OpenSSL 3.0.15 installate in `/usr/local/openssl-3.0.15`
 - Sistema Linux/macOS
 
 ---
 
-## Compilazione
+## Compilazione con Makefile
 
-```sh
-gcc server.c -o server -lssl -lcrypto
-gcc client.c -o client -lssl -lcrypto
+Il progetto include un `Makefile` per compilare facilmente server e client con le corrette opzioni per OpenSSL 3.0.15.
+
+Per compilare **sia server che client**:
+
+```bash
+make
+```
+
+Per compilare solo il server:
+
+```bash
+make server
+```
+
+Per compilare solo il client:
+
+```bash
+make client
+```
+
+Per pulire gli eseguibili compilati:
+
+```bash
+make clean
 ```
 
 ---
@@ -103,7 +126,7 @@ gcc client.c -o client -lssl -lcrypto
 
 ### 1. Avvio del Server
 
-```sh
+```bash
 ./server fcfs    # oppure ./server sjf
 ```
 
@@ -111,19 +134,19 @@ gcc client.c -o client -lssl -lcrypto
 
 #### a) Calcolo Hash
 
-```sh
-./client hash test_file.txt
+```bash
+./client hash nome_file
 ```
 
 #### b) Modifica Limite Worker
 
-```sh
-./client control 2
+```bash
+./client control <numero_worker>
 ```
 
 #### c) Stato Server
 
-```sh
+```bash
 ./client status
 ```
 
@@ -131,15 +154,17 @@ gcc client.c -o client -lssl -lcrypto
 
 ## Note Tecniche
 
-- **Gestione Errori:** Il server gestisce errori come `Interrupted system call` e ripristina lo stato.
-- **Pulizia Risorse:** Alla chiusura, il server libera tutte le risorse IPC. In caso di crash, è possibile pulire manualmente con i comandi indicati.
-- **Sicurezza:** L'accesso alle risorse condivise è protetto da semafori per evitare race condition.
+- Il progetto usa OpenSSL 3.0.15, configurato manualmente con `-I` e `-L` nel Makefile.
+- Il Makefile specifica il `rpath` per il corretto caricamento dinamico delle librerie OpenSSL.
+- È necessario che la directory `/usr/local/openssl-3.0.15/lib64` contenga le librerie OpenSSL.
 
 ---
 
 ## Pulizia Manuale delle Risorse IPC
 
-```sh
+Se il server termina in modo anomalo, le risorse IPC potrebbero rimanere allocate. Per pulirle manualmente:
+
+```bash
 ipcs -q      # Visualizza code di messaggi
 ipcs -m      # Visualizza memoria condivisa
 ls /dev/shm/ # Visualizza semafori POSIX
@@ -156,21 +181,21 @@ rm /dev/shm/sem.shm_init_sem
 
 ## Possibili Estensioni
 
-- Implementazione di un pool di buffer per vera elaborazione parallela.
-- Supporto per autenticazione client-server.
-- Logging avanzato delle richieste e delle risposte.
-- Interfaccia grafica per la gestione del server.
+- Pool di buffer per vera elaborazione parallela.
+- Autenticazione client-server.
+- Logging avanzato.
+- Interfaccia grafica di controllo.
 
 ---
 
 ## FAQ
 
-**D: Cosa succede se invio più richieste contemporaneamente?**  
-R: Con il buffer singolo, le richieste vengono gestite una alla volta. Con un pool di buffer, il server può gestire più richieste in parallelo.
+**D: Posso inviare più richieste contemporaneamente?**  
+R: Con un solo buffer condiviso, no. Serve un pool di buffer per la vera parallelizzazione.
 
-**D: Come posso aumentare la sicurezza?**  
-R: Si possono aggiungere controlli di autenticazione e cifratura dei dati.
+**D: Come aumentare la sicurezza?**  
+R: Aggiungendo autenticazione e cifratura.
 
 ---
 
-Per ulteriori dettagli, consulta il codice sorgente e i commenti all'interno dei file `server.c` e
+Per dettagli consultare i sorgenti `server.c` e `client.c`.
