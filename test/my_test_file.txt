@@ -1,0 +1,1 @@
+Questo è un file di prova per calcolare il suo hash SHA-256 usando IPC.
