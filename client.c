@@ -7,25 +7,19 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <openssl/sha.h> // For SHA256_DIGEST_LENGTH
-#include <semaphore.h>   // For sem_t
-#include <errno.h>       // For errno and EINTR
+#include <errno.h> // Per errno
 
-// IPC Constants
+// Costanti IPC
 #define SERVER_MSG_QUEUE_KEY 1234
-#define SHM_KEY 5678
-#define MAX_FILE_SIZE (256 * 1024) // 256 KB - Reduced for SHM compatibility on some systems
-#define MAX_PENDING_REQUESTS 100   // Maximum request queue size
+#define MAX_FILE_SIZE (256 * 1024) // Deve corrispondere al server
 
-// Message Types
-#define MSG_TYPE_REQUEST 1    // Hash calculation request from client
-#define MSG_TYPE_CONTROL 2    // Control message
-#define MSG_TYPE_STATUS_REQ 3 // Server status request
-#define MSG_TYPE_RESPONSE 4   // Server response to client
+// Tipi di Messaggio (devono corrispondere al server)
+#define MSG_TYPE_REQUEST 1
+#define MSG_TYPE_CONTROL 2
+#define MSG_TYPE_STATUS_REQ 3
+#define MSG_TYPE_RESPONSE 4
 
-// Message Structures
-
-// Structure for request message (client to server)
+// Struttura per messaggio di richiesta (client a server)
 struct RequestMessage
 {
     long mtype;
@@ -34,201 +28,160 @@ struct RequestMessage
     size_t file_size;
 };
 
-// Structure for control message (control client to server)
+// Struttura per messaggio di controllo (client di controllo a server)
 struct ControlMessage
 {
     long mtype;
     int new_max_workers;
 };
 
-// Structure for status request message (status client to server)
+// Struttura per messaggio di richiesta stato (client di stato a server)
 struct StatusRequestMessage
 {
     long mtype;
     pid_t client_pid;
 };
 
-// Structure for response message (server to client)
+// Struttura per messaggio di risposta (server a client)
 struct ResponseMessage
 {
     long mtype;
-    char content[256]; // SHA-256 hash or status string
+    char content[256]; // Hash SHA-256 o stringa di stato
 };
 
-// RequestQueueEntry definition (must match server's SHM struct)
-typedef struct
+// --- Funzioni di Utilità Client ---
+
+// Invia una richiesta di hashing al server
+void send_hash_request(const char *filename)
 {
-    pid_t client_pid;
-    char filename[256];
-    size_t file_size;
-} RequestQueueEntry;
-
-// Shared Memory Structure
-// This MUST exactly match the SharedMemoryData struct in the server.c file.
-typedef struct
-{
-    int max_workers;                     // Concurrent worker limit
-    volatile int current_workers;        // Number of active worker processes
-    int scheduling_algo;                 // Scheduling algorithm (FCFS or SJF)
-    volatile int pending_requests_count; // Number of requests in queue
-
-    RequestQueueEntry request_queue[MAX_PENDING_REQUESTS]; // Simple array
-
-    char file_data_buffer[MAX_FILE_SIZE];
-    size_t file_data_current_size;
-    pid_t file_data_client_pid;
-    char file_data_filename[256];
-} SharedMemoryData;
-
-
-// --- Client Functions ---
-
-// Function for the client requesting file hash calculation.
-void run_hash_client(const char *filepath)
-{
-    printf("Client Hash: Starting for file '%s'.\n", filepath);
-
-    // 1. Get server's message queue
     key_t server_mq_key = SERVER_MSG_QUEUE_KEY;
-    int server_msqid = msgget(server_mq_key, 0666);
+    int server_msqid = msgget(server_mq_key, 0666); // Ottieni la coda del server
     if (server_msqid == -1)
     {
-        perror("Client Hash: Error retrieving server message queue. Ensure the server is running.");
+        perror("Client Hash: Errore nel recuperare la coda messaggi del server");
         exit(1);
     }
-    printf("Client Hash: Server message queue obtained with ID: %d\n", server_msqid);
+    printf("Client Hash: Coda messaggi del server ottenuta con ID: %d\n", server_msqid);
 
-    // Get file size
-    FILE *file = fopen(filepath, "rb");
-    if (!file)
-    {
-        perror("Client Hash: Error opening file");
-        exit(1);
-    }
-    fseek(file, 0, SEEK_END);
-    long file_size_long = ftell(file);
-    fclose(file);
-
-    if (file_size_long == -1) {
-        perror("Client Hash: Error getting file size");
-        exit(1);
-    }
-    size_t file_size = (size_t)file_size_long;
-
-    if (file_size > MAX_FILE_SIZE)
-    {
-        fprintf(stderr, "Client Hash: Error: File '%s' is too large (%zu bytes). Limit is %d bytes.\n", filepath, file_size, MAX_FILE_SIZE);
-        exit(1);
-    }
-
-    // 2. Create client's response message queue
-    pid_t client_pid = getpid();
-    key_t client_mq_key = client_pid;
+    // Crea una coda messaggi privata per ricevere la risposta
+    key_t client_mq_key = getpid(); // La PID del client come chiave
     int client_msqid = msgget(client_mq_key, IPC_CREAT | 0666);
     if (client_msqid == -1)
     {
-        perror("Client Hash: Error creating client message queue");
+        perror("Client Hash: Errore nella creazione della coda messaggi del client");
+        exit(1); // Esci se non riusciamo a creare la coda
+    }
+    printf("Client Hash: Coda messaggi del client creata con ID: %d (chiave: %d)\n", client_msqid, client_mq_key);
+
+    // Leggi la dimensione del file
+    struct stat st;
+    if (stat(filename, &st) == -1)
+    {
+        perror("Client Hash: Errore nel recuperare le informazioni sul file");
+        msgctl(client_msqid, IPC_RMID, NULL); // Pulisci la coda del client
         exit(1);
     }
-    printf("Client Hash: Client message queue created with ID: %d (key: %d)\n", client_msqid, client_mq_key);
+    size_t file_size = st.st_size;
 
-    // Send the request to the server
+    if (file_size > MAX_FILE_SIZE) {
+        fprintf(stderr, "Client Hash: Errore: Il file '%s' (dimensione %zu byte) supera il limite massimo del server (%d byte). Non invio la richiesta.\n",
+                filename, file_size, MAX_FILE_SIZE);
+        msgctl(client_msqid, IPC_RMID, NULL); // Pulisci la coda del client
+        return; // Non esci, ma non invii la richiesta. Il client attenderà comunque una risposta.
+    }
+
+
     struct RequestMessage request;
     request.mtype = MSG_TYPE_REQUEST;
-    request.client_pid = client_pid;
-    strncpy(request.filename, filepath, sizeof(request.filename) - 1);
+    request.client_pid = getpid();
+    strncpy(request.filename, filename, sizeof(request.filename) - 1);
     request.filename[sizeof(request.filename) - 1] = '\0';
-    request.file_size = file_size; // Include file size for SJF
+    request.file_size = file_size;
 
+    printf("Client Hash: Richiesta inviata al server. In attesa di risposta...\n");
     if (msgsnd(server_msqid, &request, sizeof(struct RequestMessage) - sizeof(long), 0) == -1)
     {
-        perror("Client Hash: Error sending request to server");
-        msgctl(client_msqid, IPC_RMID, NULL);
+        perror("Client Hash: Errore nell'invio della richiesta al server");
+        msgctl(client_msqid, IPC_RMID, NULL); // Pulisci la coda del client
         exit(1);
     }
-    printf("Client Hash: Request sent to server. Waiting for response...\n");
 
-    // Receive response from the server
+    // Attendi la risposta dal server
     struct ResponseMessage response;
     ssize_t bytes_received;
     do {
         bytes_received = msgrcv(client_msqid, &response, sizeof(struct ResponseMessage) - sizeof(long), MSG_TYPE_RESPONSE, 0);
-    } while (bytes_received == -1 && errno == EINTR);
-
+    } while (bytes_received == -1 && errno == EINTR); // Gestisce interruzioni di sistema
 
     if (bytes_received == -1)
     {
-        perror("Client Hash: Error receiving response from server");
-        msgctl(client_msqid, IPC_RMID, NULL);
-        exit(1);
+        perror("Client Hash: Errore nella ricezione della risposta dal server");
     }
-    printf("Client Hash: Response from server received.\n");
-    printf("Client Hash: SHA-256 received: %s\n", response.content);
+    else
+    {
+        printf("Client Hash: Hash ricevuto per '%s': %s\n", filename, response.content);
+    }
 
-    // Cleanup client resources
-    msgctl(client_msqid, IPC_RMID, NULL);
-    printf("Client Hash: Cleanup completed.\n");
+    msgctl(client_msqid, IPC_RMID, NULL); // Rimuovi la coda messaggi del client
 }
 
-// Function for the control client to modify the worker limit.
-void run_control_client(int new_limit)
+// Invia un messaggio di controllo al server per cambiare il limite worker
+void send_control_message(int new_max_workers)
 {
-    printf("Client Control: Sending request to set worker limit to %d.\n", new_limit);
-
     key_t server_mq_key = SERVER_MSG_QUEUE_KEY;
     int server_msqid = msgget(server_mq_key, 0666);
     if (server_msqid == -1)
     {
-        perror("Client Control: Error retrieving server message queue. Ensure the server is running.");
+        perror("Client Control: Errore nel recuperare la coda messaggi del server");
         exit(1);
     }
 
     struct ControlMessage control;
     control.mtype = MSG_TYPE_CONTROL;
-    control.new_max_workers = new_limit;
+    control.new_max_workers = new_max_workers;
 
+    printf("Client Control: Invio messaggio per impostare limite worker a %d...\n", new_max_workers);
     if (msgsnd(server_msqid, &control, sizeof(struct ControlMessage) - sizeof(long), 0) == -1)
     {
-        perror("Client Control: Error sending control message to server");
+        perror("Client Control: Errore nell'invio del messaggio di controllo");
         exit(1);
     }
-    printf("Client Control: Control message sent successfully.\n");
+    printf("Client Control: Messaggio di controllo inviato.\n");
 }
 
-// Function for the status client to query the server.
-void run_status_client()
+// Invia una richiesta di stato al server e stampa la risposta
+void request_status()
 {
-    printf("Client Status: Requesting server status.\n");
-
     key_t server_mq_key = SERVER_MSG_QUEUE_KEY;
     int server_msqid = msgget(server_mq_key, 0666);
     if (server_msqid == -1)
     {
-        perror("Client Status: Error retrieving server message queue. Ensure the server is running.");
+        perror("Client Status: Errore nel recuperare la coda messaggi del server");
         exit(1);
     }
 
-    pid_t client_pid = getpid();
-    key_t client_mq_key = client_pid;
+    // Crea una coda messaggi privata per ricevere la risposta
+    key_t client_mq_key = getpid();
     int client_msqid = msgget(client_mq_key, IPC_CREAT | 0666);
     if (client_msqid == -1)
     {
-        perror("Client Status: Error creating client message queue");
+        perror("Client Status: Errore nella creazione della coda messaggi del client");
         exit(1);
     }
 
     struct StatusRequestMessage status_req;
     status_req.mtype = MSG_TYPE_STATUS_REQ;
-    status_req.client_pid = client_pid;
+    status_req.client_pid = getpid();
 
+    printf("Client Status: Richiesta stato inviata al server. In attesa di risposta...\n");
     if (msgsnd(server_msqid, &status_req, sizeof(struct StatusRequestMessage) - sizeof(long), 0) == -1)
     {
-        perror("Client Status: Error sending status request to server");
+        perror("Client Status: Errore nell'invio della richiesta di stato");
         msgctl(client_msqid, IPC_RMID, NULL);
         exit(1);
     }
-    printf("Client Status: Status request sent. Waiting for response...\n");
 
+    // Attendi la risposta dal server
     struct ResponseMessage response;
     ssize_t bytes_received;
     do {
@@ -237,65 +190,72 @@ void run_status_client()
 
     if (bytes_received == -1)
     {
-        perror("Client Status: Error receiving status response from server");
-        msgctl(client_msqid, IPC_RMID, NULL);
-        exit(1);
+        perror("Client Status: Errore nella ricezione della risposta di stato");
     }
-    printf("Client Status: Response from server: %s\n", response.content);
+    else
+    {
+        printf("Client Status: Risposta stato server: %s\n", response.content);
+    }
 
-    msgctl(client_msqid, IPC_RMID, NULL);
-    printf("Client Status: Cleanup completed.\n");
+    msgctl(client_msqid, IPC_RMID, NULL); // Rimuovi la coda messaggi del client
 }
 
-// --- Main Client Function ---
+// --- Funzione Principale del Client ---
 
 int main(int argc, char *argv[])
 {
     if (argc < 2)
     {
-        fprintf(stderr, "Usage:\n");
-        fprintf(stderr, "  Hash Client: %s hash <filepath>\n", argv[0]);
-        fprintf(stderr, "  Control Client: %s control <new_worker_limit>\n", argv[0]);
-        fprintf(stderr, "  Status Client: %s status\n", argv[0]);
-        exit(1);
+        fprintf(stderr, "Uso: %s <comando> [argomenti...]\n", argv[0]);
+        fprintf(stderr, "Comandi:\n");
+        fprintf(stderr, "  hash <percorso_file>\n");
+        fprintf(stderr, "  control <nuovo_limite_worker>\n");
+        fprintf(stderr, "  status\n");
+        return 1;
     }
+
+    // Aggiungi un piccolo ritardo per dare tempo al server di inizializzare
+    // Questo è particolarmente utile quando i client vengono avviati in rapida successione.
+    usleep(100000); // Ritardo di 100 millisecondi
 
     if (strcmp(argv[1], "hash") == 0)
     {
-        if (argc < 3)
+        if (argc != 3)
         {
-            fprintf(stderr, "Usage: %s hash <filepath>\n", argv[0]);
-            exit(1);
+            fprintf(stderr, "Uso: %s hash <percorso_file>\n", argv[0]);
+            return 1;
         }
-        run_hash_client(argv[2]);
+        printf("Client Hash: Avvio per il file '%s'.\n", argv[2]);
+        send_hash_request(argv[2]);
     }
     else if (strcmp(argv[1], "control") == 0)
     {
-        if (argc < 3)
+        if (argc != 3)
         {
-            fprintf(stderr, "Usage: %s control <new_worker_limit>\n", argv[0]);
-            exit(1);
+            fprintf(stderr, "Uso: %s control <nuovo_limite_worker>\n", argv[0]);
+            return 1;
         }
         int new_limit = atoi(argv[2]);
         if (new_limit <= 0)
         {
-            fprintf(stderr, "Error: Worker limit must be a positive number.\n");
-            exit(1);
+            fprintf(stderr, "Errore: Il limite worker deve essere un numero positivo.\n");
+            return 1;
         }
-        run_control_client(new_limit);
+        send_control_message(new_limit);
     }
     else if (strcmp(argv[1], "status") == 0)
     {
-        run_status_client();
+        if (argc != 2)
+        {
+            fprintf(stderr, "Uso: %s status\n", argv[0]);
+            return 1;
+        }
+        request_status();
     }
     else
     {
-        fprintf(stderr, "Invalid argument: '%s'\n", argv[1]);
-        fprintf(stderr, "Usage:\n");
-        fprintf(stderr, "  Hash Client: %s hash <filepath>\n", argv[0]);
-        fprintf(stderr, "  Control Client: %s control <new_worker_limit>\n", argv[0]);
-        fprintf(stderr, "  Status Client: %s status\n", argv[0]);
-        exit(1);
+        fprintf(stderr, "Comando sconosciuto: %s\n", argv[1]);
+        return 1;
     }
 
     return 0;

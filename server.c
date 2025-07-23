@@ -4,70 +4,69 @@
 #include <sys/ipc.h>
 #include <sys/msg.h>
 #include <sys/shm.h>
-#include <sys/stat.h>    // For S_IRUSR | S_IWUSR
-#include <unistd.h>      // For fork, getpid, read, close
-#include <fcntl.h>       // For open, O_RDONLY
-#include <openssl/evp.h> // For EVP API (modern OpenSSL hashing)
-#include <openssl/sha.h> // For SHA256_DIGEST_LENGTH (defines SHA-256 hash size)
-#include <semaphore.h>   // For POSIX semaphores
-#include <sys/wait.h>    // For waitpid
-#include <signal.h>      // For signal handling (SIGCHLD)
-#include <errno.h>       // For errno and EINTR
+#include <sys/stat.h>    // Per S_IRUSR | S_IWUSR, stat
+#include <unistd.h>      // Per fork, getpid, read, close
+#include <fcntl.h>       // Per open, O_RDONLY, O_CREAT
+#include <openssl/sha.h> // Per SHA256_DIGEST_LENGTH (ancora utile per la dimensione)
+#include <openssl/evp.h> // Per le nuove API EVP
+#include <semaphore.h>   // Per semafori POSIX
+#include <sys/wait.h>    // Per waitpid
+#include <signal.h>      // Per gestione segnali (SIGCHLD, SIGINT)
+#include <errno.h>       // Per errno e EINTR
 
-// IPC Constants
+// Costanti IPC
 #define SERVER_MSG_QUEUE_KEY 1234
 #define SHM_KEY 5678
-#define MAX_FILE_SIZE (256 * 1024) // 256 KB - Reduced for SHM compatibility
-#define MAX_PENDING_REQUESTS 100   // Maximum request queue size
-#define MAX_WORKERS_DEFAULT 5      // Default worker limit
+#define MAX_FILE_SIZE (256 * 1024) // 256 KB - Limite per i file da processare
+#define MAX_PENDING_REQUESTS 100   // Dimensione massima coda richieste
+#define MAX_WORKERS_DEFAULT 5      // Limite worker predefinito
 
-// Named Semaphore Names
-#define SEM_WORKER_LIMIT_NAME "/worker_limit_sem"
-#define SEM_QUEUE_MUTEX_NAME "/queue_mutex_sem"
-#define SEM_QUEUE_FILL_NAME "/queue_fill_sem"
-#define SEM_SHM_INIT_NAME "/shm_init_sem" // Semaphore for SHM initialization
+// Nomi Semafori Nominati
+#define SEM_WORKER_LIMIT_NAME "/server_worker_limit_sem"
+#define SEM_QUEUE_MUTEX_NAME "/server_queue_mutex_sem"
+#define SEM_QUEUE_FILL_NAME "/server_queue_fill_sem"
 
-// Message Types
-#define MSG_TYPE_REQUEST 1    // Hash calculation request from client
-#define MSG_TYPE_CONTROL 2    // Control message (e.g., change worker limit)
-#define MSG_TYPE_STATUS_REQ 3 // Server status request
-#define MSG_TYPE_RESPONSE 4   // Server response to client (hash or status)
+// Tipi di Messaggio
+#define MSG_TYPE_REQUEST 1    // Richiesta calcolo hash dal client
+#define MSG_TYPE_CONTROL 2    // Messaggio di controllo (es. cambia limite worker)
+#define MSG_TYPE_STATUS_REQ 3 // Richiesta stato server
+#define MSG_TYPE_RESPONSE 4   // Risposta server al client (hash o stato)
 
-// Scheduling Algorithms
+// Algoritmi di Scheduling
 #define SCHED_FCFS 0 // First-Come, First-Served
 #define SCHED_SJF 1  // Shortest Job First
 
-// Structure for request message (client to server)
+// Struttura per messaggio di richiesta (client a server)
 struct RequestMessage
 {
     long mtype;
     pid_t client_pid;
     char filename[256];
-    size_t file_size; // Expected file size
+    size_t file_size; // Dimensione attesa del file
 };
 
-// Structure for control message (control client to server)
+// Struttura per messaggio di controllo (client di controllo a server)
 struct ControlMessage
 {
     long mtype;
     int new_max_workers;
 };
 
-// Structure for status request message (status client to server)
+// Struttura per messaggio di richiesta stato (client di stato a server)
 struct StatusRequestMessage
 {
     long mtype;
     pid_t client_pid;
 };
 
-// Structure for response message (server to client)
+// Struttura per messaggio di risposta (server a client)
 struct ResponseMessage
 {
     long mtype;
-    char content[256]; // SHA-256 hash or status string
+    char content[256]; // Hash SHA-256 o stringa di stato
 };
 
-// Structure for a single entry in the shared request queue
+// Struttura per una singola voce nella coda di richieste condivisa
 typedef struct
 {
     pid_t client_pid;
@@ -75,153 +74,156 @@ typedef struct
     size_t file_size;
 } RequestQueueEntry;
 
-// Shared Memory Structure
-// Contains synchronization data, configuration, and the request queue.
-// Named semaphores don't use SHM but names for identification.
+// Struttura della Memoria Condivisa
+// Contiene dati di sincronizzazione, configurazione e la coda di richieste.
+// I semafori nominati non usano SHM ma nomi per l'identificazione.
 typedef struct
 {
-    int max_workers;                     // Concurrent worker limit
-    volatile int current_workers;        // Number of active worker processes
-    int scheduling_algo;                 // Scheduling algorithm (FCFS or SJF)
-    volatile int pending_requests_count; // Number of requests in queue
+    int max_workers;                // Limite worker concorrenti
+    volatile int current_workers;   // Numero di processi worker attivi
+    int scheduling_algo;            // Algoritmo di scheduling (FCFS o SJF)
+    volatile int pending_requests_count; // Numero di richieste in coda (head sempre a 0, si spostano gli elementi)
 
-    // Simple array for queue management. For SJF, elements will be sorted.
+    // Semplice array per la gestione della coda. Per SJF, gli elementi saranno ordinati.
     RequestQueueEntry request_queue[MAX_PENDING_REQUESTS];
 
-    // Buffer for file data transfer.
-    // Only one file can be in SHM at a time. Workers must copy it.
-    char file_data_buffer[MAX_FILE_SIZE];
-    size_t file_data_current_size;
-    pid_t file_data_client_pid;
-    char file_data_filename[256];
 } SharedMemoryData;
 
-// Global pointer to shared memory
-SharedMemoryData *shm_ptr;
-int server_msqid;
-int shmid;
+// Puntatore globale alla memoria condivisa
+SharedMemoryData *shm_ptr = NULL; // Inizializza a NULL
+int server_msqid = -1;
+int shmid = -1;
 
-// Global pointers to named semaphores
-sem_t *worker_limit_sem_ptr;
-sem_t *queue_mutex_ptr;
-sem_t *queue_fill_sem_ptr;
-sem_t *shm_init_sem_ptr;
+// Puntatori globali ai semafori nominati
+sem_t *worker_limit_sem_ptr = SEM_FAILED;
+sem_t *queue_mutex_ptr = SEM_FAILED;
+sem_t *queue_fill_sem_ptr = SEM_FAILED;
 
-// --- Utility Functions for SHA-256 ---
+// Flag per indicare al ciclo principale di terminare
+volatile sig_atomic_t server_should_exit = 0;
 
-// Calculates SHA-256 of a buffer using EVP
+
+// --- Funzioni di Utilità per SHA-256 (usando le API EVP) ---
+
+// Calcola SHA-256 di un buffer usando le API EVP (OpenSSL 3.0+)
 void digest_buffer(const char *buffer, size_t len, unsigned char *hash)
 {
-    EVP_MD_CTX *mdctx = NULL;
-    EVP_MD *md = NULL;
-    unsigned int md_len;
-
-    md = (EVP_MD *)EVP_MD_fetch(NULL, "SHA256", NULL);
-    if (md == NULL)
-    {
-        fprintf(stderr, "Error: Could not fetch SHA256 algorithm.\n");
-        exit(EXIT_FAILURE);
-    }
+    EVP_MD_CTX *mdctx = NULL; // Contesto per l'operazione di digest
+    const EVP_MD *md = NULL;  // Algoritmo di digest (SHA256)
+    unsigned int md_len;      // Lunghezza del digest
+    int ret = 0; // Return value for OpenSSL functions
 
     mdctx = EVP_MD_CTX_new();
-    if (mdctx == NULL)
-    {
-        fprintf(stderr, "Error: Could not create EVP_MD_CTX.\n");
-        EVP_MD_free(md);
-        exit(EXIT_FAILURE);
+    if (mdctx == NULL) {
+        fprintf(stderr, "Errore: Impossibile creare il contesto EVP_MD_CTX.\n");
+        goto err;
     }
 
-    if (1 != EVP_DigestInit_ex(mdctx, md, NULL))
-    {
-        fprintf(stderr, "Error: Could not initialize digest.\n");
-        EVP_MD_CTX_free(mdctx);
-        EVP_MD_free(md);
-        exit(EXIT_FAILURE);
+    md = EVP_MD_fetch(NULL, "SHA256", NULL);
+    if (md == NULL) {
+        fprintf(stderr, "Errore: Impossibile recuperare l'algoritmo SHA256.\n");
+        goto err;
     }
 
-    if (1 != EVP_DigestUpdate(mdctx, buffer, len))
-    {
-        fprintf(stderr, "Error: Could not update digest.\n");
-        EVP_MD_CTX_free(mdctx);
-        EVP_MD_free(md);
-        exit(EXIT_FAILURE);
+    ret = EVP_DigestInit_ex(mdctx, md, NULL);
+    if (ret != 1) {
+        fprintf(stderr, "Errore: Impossibile inizializzare il digest EVP (EVP_DigestInit_ex).\n");
+        goto err;
     }
 
-    if (1 != EVP_DigestFinal_ex(mdctx, hash, &md_len))
-    {
-        fprintf(stderr, "Error: Could not finalize digest.\n");
-        EVP_MD_CTX_free(mdctx);
-        EVP_MD_free(md);
-        exit(EXIT_FAILURE);
+    ret = EVP_DigestUpdate(mdctx, buffer, len);
+    if (ret != 1) {
+        fprintf(stderr, "Errore: Impossibile aggiornare il digest EVP (EVP_DigestUpdate).\n");
+        goto err;
     }
 
-    EVP_MD_CTX_free(mdctx);
-    EVP_MD_free(md);
+    ret = EVP_DigestFinal_ex(mdctx, hash, &md_len);
+    if (ret != 1) {
+        fprintf(stderr, "Errore: Impossibile finalizzare il digest EVP (EVP_DigestFinal_ex).\n");
+        goto err;
+    }
+
+    if (md_len != SHA256_DIGEST_LENGTH) {
+        fprintf(stderr, "Errore: Lunghezza hash SHA256 non corrispondente (%u vs %d).\n", md_len, SHA256_DIGEST_LENGTH);
+        goto err;
+    }
+
+err:
+    if (mdctx) EVP_MD_CTX_free(mdctx);
+    if (md) EVP_MD_free((EVP_MD *)md);
+    // If an error occurred and we reached here, ensure proper termination.
+    // In a real application, you might want to return an error code or set an error flag.
+    // For this example, we'll let it proceed, but the hash might be garbage if an error occurred.
+    // A more robust error handling would prevent the worker from sending a bad hash.
 }
 
-// Converts bytes to hexadecimal string
+// Converte byte in stringa esadecimale
 void bytes_to_hex(unsigned char *bytes, int len, char *hex_string)
 {
     for (int i = 0; i < len; i++)
     {
         sprintf(hex_string + (i * 2), "%02x", bytes[i]);
     }
-    hex_string[len * 2] = '\0'; // Add null terminator
+    hex_string[len * 2] = '\0'; // Aggiungi terminatore nullo
 }
 
-// --- Queue Management Functions ---
+// --- Funzioni di Gestione Coda ---
 
-// Adds a request to the queue (mutex already acquired)
+// Aggiunge una richiesta alla coda (mutex già acquisito)
+// La coda è gestita come un array, sempre con il primo elemento come "head" logica.
+// Per SJF, gli elementi vengono riordinati dopo ogni aggiunta.
 int enqueue_request(const struct RequestMessage *request)
 {
     if (shm_ptr->pending_requests_count >= MAX_PENDING_REQUESTS)
     {
-        fprintf(stderr, "Server: Request queue full, discarding request from PID %d.\n", request->client_pid);
+        fprintf(stderr, "Server: Coda richieste piena, scarto richiesta da PID %d.\n", request->client_pid);
         return -1;
     }
 
-    // Add to the end of the logical array
-    shm_ptr->request_queue[shm_ptr->pending_requests_count] = (RequestQueueEntry){
-        .client_pid = request->client_pid,
-        .file_size = request->file_size};
+    // Aggiungi alla fine logica dell'array
+    shm_ptr->request_queue[shm_ptr->pending_requests_count].client_pid = request->client_pid;
     strncpy(shm_ptr->request_queue[shm_ptr->pending_requests_count].filename, request->filename, sizeof(shm_ptr->request_queue[shm_ptr->pending_requests_count].filename) - 1);
     shm_ptr->request_queue[shm_ptr->pending_requests_count].filename[sizeof(shm_ptr->request_queue[shm_ptr->pending_requests_count].filename) - 1] = '\0';
+    shm_ptr->request_queue[shm_ptr->pending_requests_count].file_size = request->file_size;
 
     shm_ptr->pending_requests_count++;
 
-    // If SJF, sort the entire active portion of the queue (bubble sort for simplicity)
-    // This ensures the shortest job is at index 0.
+    // Se SJF, ordina l'intera porzione attiva della coda
     if (shm_ptr->scheduling_algo == SCHED_SJF && shm_ptr->pending_requests_count > 1)
     {
+        // Bubble sort per semplicità, ma per un numero elevato di richieste
+        // sarebbe meglio una struttura dati con priorità o un qsort su un array temporaneo.
         for (int i = 0; i < shm_ptr->pending_requests_count - 1; i++)
         {
             for (int j = 0; j < shm_ptr->pending_requests_count - i - 1; j++)
             {
                 if (shm_ptr->request_queue[j].file_size > shm_ptr->request_queue[j + 1].file_size)
                 {
-                    // Swap
+                    // Scambia gli elementi
                     RequestQueueEntry temp = shm_ptr->request_queue[j];
                     shm_ptr->request_queue[j] = shm_ptr->request_queue[j + 1];
                     shm_ptr->request_queue[j + 1] = temp;
                 }
             }
         }
+        printf("Server: Coda riordinata per SJF. Prossimo file: '%s' (dim: %zu)\n",
+               shm_ptr->request_queue[0].filename, shm_ptr->request_queue[0].file_size);
     }
     return 0;
 }
 
-// Extracts the next request (mutex already acquired)
-// For both FCFS and SJF, the next job to process is always at index 0 after enqueueing/sorting.
+// Estrae la prossima richiesta (mutex già acquisito)
+// La prossima richiesta è sempre la prima nell'array (indice 0).
 int dequeue_request(RequestQueueEntry *entry)
 {
     if (shm_ptr->pending_requests_count == 0)
     {
-        return -1; // Queue empty
+        return -1; // Coda vuota
     }
 
-    *entry = shm_ptr->request_queue[0]; // Take the request from the front
+    *entry = shm_ptr->request_queue[0]; // Prendi la richiesta dalla parte anteriore
 
-    // Shift all subsequent elements one position to the left
+    // Sposta tutti gli elementi successivi di una posizione a sinistra per "rimuovere" il primo
     for (int i = 0; i < shm_ptr->pending_requests_count - 1; i++)
     {
         shm_ptr->request_queue[i] = shm_ptr->request_queue[i + 1];
@@ -231,348 +233,362 @@ int dequeue_request(RequestQueueEntry *entry)
     return 0;
 }
 
-// --- Signal Handler ---
+// --- Funzioni di Pulizia Risorse IPC ---
 
-// SIGCHLD signal handler to prevent zombie processes.
+// Funzione per la pulizia delle risorse IPC (coda messaggi, memoria condivisa, semafori).
+void cleanup_ipc_resources()
+{
+    printf("Server: Avvio pulizia risorse IPC...\n");
+
+    // Chiudi e scollega i semafori nominati
+    if (worker_limit_sem_ptr != SEM_FAILED && worker_limit_sem_ptr != NULL) {
+        sem_close(worker_limit_sem_ptr);
+        sem_unlink(SEM_WORKER_LIMIT_NAME);
+        printf("Server: Semaforo '%s' chiuso e scollegato.\n", SEM_WORKER_LIMIT_NAME);
+    }
+    if (queue_mutex_ptr != SEM_FAILED && queue_mutex_ptr != NULL) {
+        sem_close(queue_mutex_ptr);
+        sem_unlink(SEM_QUEUE_MUTEX_NAME);
+        printf("Server: Semaforo '%s' chiuso e scollegato.\n", SEM_QUEUE_MUTEX_NAME);
+    }
+    if (queue_fill_sem_ptr != SEM_FAILED && queue_fill_sem_ptr != NULL) {
+        sem_close(queue_fill_sem_ptr);
+        sem_unlink(SEM_QUEUE_FILL_NAME);
+        printf("Server: Semaforo '%s' chiuso e scollegato.\n", SEM_QUEUE_FILL_NAME);
+    }
+
+    if (shm_ptr != (void *)-1 && shm_ptr != NULL)
+    {
+        if (shmdt(shm_ptr) == -1) {
+            perror("Server: Errore nel distacco della memoria condivisa");
+        }
+        printf("Server: Memoria condivisa distaccata.\n");
+    }
+
+    if (shmid != -1)
+    {
+        if (shmctl(shmid, IPC_RMID, NULL) == -1) {
+            perror("Server: Errore nella rimozione della memoria condivisa");
+        }
+        printf("Server: Memoria condivisa rimossa con ID: %d.\n", shmid);
+    }
+
+    if (server_msqid != -1)
+    {
+        if (msgctl(server_msqid, IPC_RMID, NULL) == -1) {
+            perror("Server: Errore nella rimozione della coda messaggi del server");
+        }
+        printf("Server: Coda messaggi server rimossa con ID: %d.\n", server_msqid);
+    }
+    printf("Server: Pulizia risorse IPC completata.\n");
+}
+
+// --- Gestore Segnali ---
+
+// Gestore del segnale SIGCHLD per prevenire processi zombie.
 void sigchld_handler(int signo)
 {
     int status;
     pid_t pid;
-    // Use WNOHANG to avoid blocking if no children have terminated
+    // Usa WNOHANG per evitare di bloccare se nessun figlio è terminato
+    // Loop per raccogliere tutti i figli terminati (potrebbero esserne terminati più di uno)
     while ((pid = waitpid(-1, &status, WNOHANG)) > 0)
     {
-        // Child terminated: decrement current_workers (with mutex for consistency).
-        sem_wait(queue_mutex_ptr); // Named semaphore pointer
-        shm_ptr->current_workers--;
-        sem_post(queue_mutex_ptr); // Named semaphore pointer
-        printf("Server: Worker process PID %d terminated. Active workers: %d.\n", pid, shm_ptr->current_workers);
+        // Figlio terminato: decrementa current_workers (con mutex per coerenza).
+        // È cruciale che questo semaforo sia accessibile globalmente dal gestore.
+        if (queue_mutex_ptr != SEM_FAILED && queue_mutex_ptr != NULL) { // Verifica che sia stato inizializzato
+            sem_wait(queue_mutex_ptr);
+            if (shm_ptr != NULL && shm_ptr != (void*)-1) { // Verifica che shm_ptr sia valido
+                shm_ptr->current_workers--;
+                printf("Server: Processo worker PID %d terminato. Worker attivi: %d.\n", pid, shm_ptr->current_workers);
+            }
+            sem_post(queue_mutex_ptr);
+        } else {
+            // Se i semafori non sono ancora inizializzati o sono già stati chiusi
+            fprintf(stderr, "Server: Avviso: SIGCHLD ricevuto ma semafori non disponibili per aggiornare worker_count.\n");
+        }
     }
 }
 
-// --- Worker Process Function ---
+// Gestore del segnale SIGINT (Ctrl+C) per uno spegnimento grazioso.
+void sigint_handler(int signo)
+{
+    printf("\nServer: Segnale SIGINT ricevuto. Avvio terminazione graziosa...\n");
+    server_should_exit = 1; // Imposta il flag per il ciclo principale
+    // Posta sui semafori per sbloccare eventuali `msgrcv` bloccati
+    // e permettere ai worker in attesa di richieste di terminare.
+    // Invia un messaggio fittizio per sbloccare msgrcv se non ci sono richieste.
+    // Se msgrcv è bloccato, l'IPC_RMID lo sbloccherà con errno = EIDRM.
+}
 
-// Function executed by each child worker process. Processes a request from the queue,
-// calculates the hash, and sends the response.
+// --- Funzione Processo Worker ---
+
+// Funzione eseguita da ogni processo worker figlio. Elabora una richiesta dalla coda,
+// calcola l'hash e invia la risposta.
 void worker_process()
 {
-    // Each worker must attach to shared memory
+    // Ogni worker deve attaccarsi alla memoria condivisa
     SharedMemoryData *local_shm_ptr = (SharedMemoryData *)shmat(shmid, NULL, 0);
     if (local_shm_ptr == (void *)-1)
     {
-        perror("Worker: Error attaching to shared memory");
+        perror("Worker: Errore nell'attaccarsi alla memoria condivisa");
         exit(1);
     }
 
-    // Each worker must open named semaphores
+    // Ogni worker deve aprire i semafori nominati (NON O_CREAT)
     sem_t *local_worker_limit_sem_ptr = sem_open(SEM_WORKER_LIMIT_NAME, 0);
     sem_t *local_queue_mutex_ptr = sem_open(SEM_QUEUE_MUTEX_NAME, 0);
     sem_t *local_queue_fill_sem_ptr = sem_open(SEM_QUEUE_FILL_NAME, 0);
 
-    if (local_worker_limit_sem_ptr == SEM_FAILED || local_queue_mutex_ptr == SEM_FAILED || local_queue_fill_sem_ptr == SEM_FAILED)
+    if (local_worker_limit_sem_ptr == SEM_FAILED || local_queue_mutex_ptr == SEM_FAILED ||
+        local_queue_fill_sem_ptr == SEM_FAILED)
     {
-        perror("Worker: Error opening named semaphores");
+        perror("Worker: Errore nell'aprire i semafori nominati");
         shmdt(local_shm_ptr);
-        exit(1);
+        exit(1); // Il worker non può operare senza semafori
     }
 
     RequestQueueEntry current_request;
-    char local_file_buffer[MAX_FILE_SIZE]; // Private buffer for the file data
+    char local_file_buffer[MAX_FILE_SIZE]; // Buffer privato per i dati del file
+    char hash_hex_string[65]; // Buffer per l'hash esadecimale
 
-    // Wait for a request in the queue
+    // Attendi che ci sia una richiesta disponibile nella coda
+    // Questo semaforo viene postato dal server principale dopo aver accodato una richiesta.
     sem_wait(local_queue_fill_sem_ptr);
 
-    // Acquire mutex to access the queue and shared buffer
+    // Acquisisci mutex per accedere in sicurezza alla coda condivisa
     sem_wait(local_queue_mutex_ptr);
 
-    // Dequeue the request
+    // Dequeue della richiesta
     if (dequeue_request(&current_request) == -1)
     {
-        fprintf(stderr, "Worker: Unexpected error: queue empty after sem_wait.\n");
-        sem_post(local_queue_mutex_ptr);      // Release mutex
+        fprintf(stderr, "Worker PID %d: Errore inatteso: coda vuota dopo sem_wait(queue_fill_sem).\n", getpid());
+        sem_post(local_queue_mutex_ptr);     // Rilascia mutex (nonostante l'errore)
         shmdt(local_shm_ptr);
         sem_close(local_worker_limit_sem_ptr);
         sem_close(local_queue_mutex_ptr);
         sem_close(local_queue_fill_sem_ptr);
-        exit(1); // Terminate worker
+        // CRITICO: In caso di errore qui, il worker deve rilasciare il semaforo worker_limit_sem_ptr
+        // altrimenti il server padre rimarrà bloccato.
+        sem_post(local_worker_limit_sem_ptr);
+        exit(1); // Termina worker con errore
     }
 
-    // Copy data from shared buffer to private buffer to avoid conflicts.
-    // This check ensures the worker is processing the file that was *just* placed in SHM by the server.
-    if (current_request.client_pid != local_shm_ptr->file_data_client_pid ||
-        strcmp(current_request.filename, local_shm_ptr->file_data_filename) != 0 ||
-        current_request.file_size != local_shm_ptr->file_data_current_size)
-    {
-        fprintf(stderr, "Worker PID %d: Warning: SHM file data does not match dequeued request. This can happen with high concurrency if the server hasn't finished copying the file. Request will be discarded.\n", getpid());
+    // Rilascia mutex sulla coda il prima possibile per non bloccare altre operazioni sulla coda.
+    sem_post(local_queue_mutex_ptr);
 
-        // Send an error response to the client
-        char error_hash[65];
-        strcpy(error_hash, "ERROR: SHM_DATA_MISMATCH");
+    printf("Worker PID %d: Elaborazione richiesta per file: '%s' (dimensione: %zu byte) da client PID: %d.\n",
+           getpid(), current_request.filename, current_request.file_size, current_request.client_pid);
+
+    // --- Il worker legge il file direttamente dal disco ---
+    int fd = open(current_request.filename, O_RDONLY);
+    if (fd == -1)
+    {
+        perror("Worker: Errore nell'apertura del file per l'elaborazione");
+        // Invia una risposta di errore al client
         key_t client_mq_key = current_request.client_pid;
         int client_msqid = msgget(client_mq_key, 0666);
-        if (client_msqid == -1)
-        {
-            perror("Worker: Error retrieving client message queue (for error response)");
-        }
-        else
+        if (client_msqid != -1)
         {
             struct ResponseMessage response;
             response.mtype = MSG_TYPE_RESPONSE;
-            strcpy(response.content, error_hash);
-            if (msgsnd(client_msqid, &response, sizeof(struct ResponseMessage) - sizeof(long), 0) == -1)
-            {
-                perror("Worker: Error sending error response to client");
-            }
+            // Calcola la lunghezza massima del nome del file per evitare il troncamento
+            const char* error_prefix = "ERROR: File '";
+            const char* error_suffix = "' non accessibile.";
+            size_t max_filename_len = sizeof(response.content) - strlen(error_prefix) - strlen(error_suffix) - 1; // -1 for null terminator
+            
+            snprintf(response.content, sizeof(response.content), "%s%.*s%s",
+                     error_prefix, (int)max_filename_len, current_request.filename, error_suffix);
+            msgsnd(client_msqid, &response, sizeof(struct ResponseMessage) - sizeof(long), 0);
         }
-        sem_post(local_queue_mutex_ptr);      // Release mutex
-        sem_post(local_worker_limit_sem_ptr); // Release worker limit semaphore
         shmdt(local_shm_ptr);
         sem_close(local_worker_limit_sem_ptr);
         sem_close(local_queue_mutex_ptr);
         sem_close(local_queue_fill_sem_ptr);
-        exit(1); // Terminate worker
+        sem_post(local_worker_limit_sem_ptr); // Rilascia semaforo limite worker
+        exit(1);
     }
 
-    // Copy the file data from shared memory to the worker's private buffer
-    memcpy(local_file_buffer, local_shm_ptr->file_data_buffer, current_request.file_size);
-    printf("Worker PID %d: Processing request for file '%s' (size: %zu bytes).\n", getpid(), current_request.filename, current_request.file_size);
+    ssize_t bytes_read = read(fd, local_file_buffer, current_request.file_size);
+    close(fd);
 
-    sem_post(local_queue_mutex_ptr); // Release mutex
+    if (bytes_read == -1 || (size_t)bytes_read != current_request.file_size)
+    {
+        perror("Worker: Errore nella lettura completa del file nel buffer locale");
+        // Invia una risposta di errore al client
+        key_t client_mq_key = current_request.client_pid;
+        int client_msqid = msgget(client_mq_key, 0666);
+        if (client_msqid != -1)
+        {
+            struct ResponseMessage response;
+            response.mtype = MSG_TYPE_RESPONSE;
+            // Calcola la lunghezza massima del nome del file per evitare il troncamento
+            const char* error_prefix = "ERROR: Lettura file '";
+            const char* error_suffix = "' fallita o incompleta.";
+            size_t max_filename_len = sizeof(response.content) - strlen(error_prefix) - strlen(error_suffix) - 1; // -1 for null terminator
 
-    // Calculate SHA-256 hash
+            snprintf(response.content, sizeof(response.content), "%s%.*s%s",
+                     error_prefix, (int)max_filename_len, current_request.filename, error_suffix);
+            msgsnd(client_msqid, &response, sizeof(struct ResponseMessage) - sizeof(long), 0);
+        }
+        shmdt(local_shm_ptr);
+        sem_close(local_worker_limit_sem_ptr);
+        sem_close(local_queue_mutex_ptr);
+        sem_close(local_queue_fill_sem_ptr);
+        sem_post(local_worker_limit_sem_ptr); // Rilascia semaforo limite worker
+        exit(1);
+    }
+
+    // Calcola hash SHA-256
     unsigned char hash_bytes[SHA256_DIGEST_LENGTH];
-    char hash_hex_string[65];
+    digest_buffer(local_file_buffer, current_request.file_size, hash_bytes);
+    bytes_to_hex(hash_bytes, SHA256_DIGEST_LENGTH, hash_hex_string);
 
-    if (current_request.file_size > MAX_FILE_SIZE)
-    {
-        // Error if file size exceeds shared memory limit (should be caught earlier by server)
-        fprintf(stderr, "Worker PID %d: Error: File size (%zu bytes) exceeds shared memory limit (%d bytes).\n", getpid(), current_request.file_size, MAX_FILE_SIZE);
-        strcpy(hash_hex_string, "ERROR: FILE_TOO_LARGE");
-    }
-    else
-    {
-        digest_buffer(local_file_buffer, current_request.file_size, hash_bytes);
-        bytes_to_hex(hash_bytes, SHA256_DIGEST_LENGTH, hash_hex_string);
-    }
-
-    // Send response to client
+    // Invia risposta al client
     key_t client_mq_key = current_request.client_pid;
-    int client_msqid = msgget(client_mq_key, 0666); // Get existing client queue
+    int client_msqid = msgget(client_mq_key, 0666); // Ottieni coda client esistente
     if (client_msqid == -1)
     {
-        perror("Worker: Error retrieving client message queue");
+        perror("Worker: Errore nel recuperare la coda messaggi del client per la risposta");
+        // Non è un errore fatale per il worker, ma la risposta non verrà consegnata.
     }
     else
     {
         struct ResponseMessage response;
         response.mtype = MSG_TYPE_RESPONSE;
-        strcpy(response.content, hash_hex_string);
+        strncpy(response.content, hash_hex_string, sizeof(response.content) - 1);
+        response.content[sizeof(response.content) - 1] = '\0';
         if (msgsnd(client_msqid, &response, sizeof(struct ResponseMessage) - sizeof(long), 0) == -1)
         {
-            perror("Worker: Error sending response to client");
+            perror("Worker: Errore nell'invio della risposta al client");
         }
     }
 
-    printf("Worker PID %d: Completed processing for '%s'. Hash: %s\n", getpid(), current_request.filename, hash_hex_string);
+    printf("Worker PID %d: Elaborazione completata per '%s'. Hash: %s\n", getpid(), current_request.filename, hash_hex_string);
 
-    shmdt(local_shm_ptr);                 // Detach shared memory
-    sem_post(local_worker_limit_sem_ptr); // Release worker limit semaphore
+    shmdt(local_shm_ptr);                 // Distacca memoria condivisa
     sem_close(local_worker_limit_sem_ptr);
     sem_close(local_queue_mutex_ptr);
     sem_close(local_queue_fill_sem_ptr);
-    exit(0); // Terminate worker process
+    sem_post(local_worker_limit_sem_ptr); // Rilascia semaforo limite worker per permettere a un nuovo worker di avviarsi
+    exit(0); // Termina processo worker con successo
 }
 
-// --- IPC Resource Cleanup Functions ---
-
-// Function for cleaning up IPC resources (message queue, shared memory, semaphores).
-void cleanup_ipc_resources()
-{
-    printf("Server: Initiating IPC resource cleanup...\n");
-
-    // Close and unlink named semaphores (ignore errors as they might not exist)
-    sem_unlink(SEM_WORKER_LIMIT_NAME);
-    sem_unlink(SEM_QUEUE_MUTEX_NAME);
-    sem_unlink(SEM_QUEUE_FILL_NAME);
-    sem_unlink(SEM_SHM_INIT_NAME);
-
-    // Close semaphore descriptors if they were successfully opened
-    if (worker_limit_sem_ptr != SEM_FAILED && worker_limit_sem_ptr != NULL)
-        sem_close(worker_limit_sem_ptr);
-    if (queue_mutex_ptr != SEM_FAILED && queue_mutex_ptr != NULL)
-        sem_close(queue_mutex_ptr);
-    if (queue_fill_sem_ptr != SEM_FAILED && queue_fill_sem_ptr != NULL)
-        sem_close(queue_fill_sem_ptr);
-    if (shm_init_sem_ptr != SEM_FAILED && shm_init_sem_ptr != NULL)
-        sem_close(shm_init_sem_ptr);
-
-    if (shm_ptr != (void *)-1 && shm_ptr != NULL)
-    {
-        shmdt(shm_ptr); // Detach shared memory
-    }
-
-    if (shmid != -1)
-    {
-        shmctl(shmid, IPC_RMID, NULL); // Remove shared memory
-    }
-
-    if (server_msqid != -1)
-    {
-        msgctl(server_msqid, IPC_RMID, NULL); // Remove server message queue
-    }
-    printf("Server: IPC resource cleanup completed.\n");
-}
-
-// SIGINT (Ctrl+C) signal handler for graceful shutdown.
-void sigint_handler(int signo)
-{
-    printf("\nServer: SIGINT signal received. Terminating...\n");
-    cleanup_ipc_resources();
-    exit(0);
-}
-
-// --- Main Server Function ---
+// --- Funzione Principale del Server ---
 
 int main(int argc, char *argv[])
 {
-    // Unlink named semaphores at startup (ignore errors)
+    printf("Server: Avvio processo server (PID: %d).\n", getpid());
+
+    // Pulisci semafori nominati, coda messaggi e SHM da esecuzioni precedenti (ignora errori)
+    // Questo è cruciale per un avvio pulito se il server è crashato prima.
     sem_unlink(SEM_WORKER_LIMIT_NAME);
     sem_unlink(SEM_QUEUE_MUTEX_NAME);
     sem_unlink(SEM_QUEUE_FILL_NAME);
-    sem_unlink(SEM_SHM_INIT_NAME);
-
-    // Clean up message queue and SHM from previous runs (ignore errors)
+    
+    // Tentativo di rimozione di IPC precedentemente esistenti
     int temp_msqid = msgget(SERVER_MSG_QUEUE_KEY, 0);
-    if (temp_msqid != -1)
-    {
-        msgctl(temp_msqid, IPC_RMID, NULL);
+    if (temp_msqid != -1) {
+        if (msgctl(temp_msqid, IPC_RMID, NULL) == 0) {
+            printf("Server: Coda messaggi precedente (ID %d) rimossa.\n", temp_msqid);
+        } else {
+            perror("Server: Errore nella rimozione coda messaggi precedente");
+        }
     }
-    int temp_shmid = shmget(SHM_KEY, 0, 0); // Get ID without creating/attaching
-    if (temp_shmid != -1)
-    {
-        shmctl(temp_shmid, IPC_RMID, NULL);
+    int temp_shmid = shmget(SHM_KEY, 0, 0);
+    if (temp_shmid != -1) {
+        if (shmctl(temp_shmid, IPC_RMID, NULL) == 0) {
+            printf("Server: Memoria condivisa precedente (ID %d) rimossa.\n", temp_shmid);
+        } else {
+            perror("Server: Errore nella rimozione SHM precedente");
+        }
     }
 
-    // Configure SIGINT signal handler for graceful cleanup
+
+    // Configura gestore segnale SIGINT per pulizia graziosa
     signal(SIGINT, sigint_handler);
-    // Configure SIGCHLD signal handler to prevent zombie processes
+    // Configura gestore segnale SIGCHLD per prevenire processi zombie
     signal(SIGCHLD, sigchld_handler);
 
-    // Set default scheduling algorithm
+    // Imposta algoritmo di scheduling predefinito
     int initial_scheduling_algo = SCHED_FCFS;
     if (argc > 1)
     {
         if (strcmp(argv[1], "sjf") == 0)
         {
             initial_scheduling_algo = SCHED_SJF;
-            printf("Server: Scheduling set to SJF (Shortest Job First).\n");
+            printf("Server: Scheduling impostato su SJF (Shortest Job First).\n");
         }
         else if (strcmp(argv[1], "fcfs") == 0)
         {
             initial_scheduling_algo = SCHED_FCFS;
-            printf("Server: Scheduling set to FCFS (First-Come, First-Served).\n");
+            printf("Server: Scheduling impostato su FCFS (First-Come, First-Served).\n");
         }
         else
         {
-            fprintf(stderr, "Server: Warning: Unknown scheduling algorithm '%s'. Using FCFS.\n", argv[1]);
+            fprintf(stderr, "Server: Attenzione: Algoritmo di scheduling sconosciuto '%s'. Uso FCFS.\n", argv[1]);
         }
     }
     else
     {
-        printf("Server: No scheduling algorithm specified. Using FCFS (First-Come, First-Served).\n");
+        printf("Server: Nessun algoritmo di scheduling specificato. Uso FCFS (First-Come, First-Served).\n");
     }
 
-    printf("Server: Starting SHA-256 server.\n");
-
-    // 1. Create/Retrieve server message queue
+    // 1. Crea/Recupera coda messaggi server
     key_t server_mq_key = SERVER_MSG_QUEUE_KEY;
     server_msqid = msgget(server_mq_key, IPC_CREAT | 0666);
     if (server_msqid == -1)
     {
-        perror("Server: Error creating server message queue");
+        perror("Server: Errore nella creazione della coda messaggi del server");
         exit(1);
     }
-    printf("Server: Server message queue created/obtained with ID: %d\n", server_msqid);
+    printf("Server: Coda messaggi server creata/ottenuta con ID: %d\n", server_msqid);
 
-    // 2. Create/Retrieve shared memory
+    // 2. Crea/Recupera memoria condivisa
     key_t shm_key = SHM_KEY;
     shmid = shmget(shm_key, sizeof(SharedMemoryData), IPC_CREAT | 0666);
     if (shmid == -1)
     {
-        perror("Server: Error creating shared memory");
-        msgctl(server_msqid, IPC_RMID, NULL);
+        perror("Server: Errore nella creazione della memoria condivisa");
+        msgctl(server_msqid, IPC_RMID, NULL); // Pulisci la coda messaggi
         exit(1);
     }
     shm_ptr = (SharedMemoryData *)shmat(shmid, NULL, 0);
     if (shm_ptr == (void *)-1)
     {
-        perror("Server: Error attaching to shared memory");
-        msgctl(server_msqid, IPC_RMID, NULL);
-        shmctl(shmid, IPC_RMID, NULL);
+        perror("Server: Errore nell'attaccarsi alla memoria condivisa");
+        msgctl(server_msqid, IPC_RMID, NULL); // Pulisci la coda messaggi
+        shmctl(shmid, IPC_RMID, NULL);       // Pulisci la SHM
         exit(1);
     }
-    printf("Server: Shared memory attached with ID: %d\n", shmid);
+    printf("Server: Memoria condivisa attaccata con ID: %d\n", shmid);
 
-    // 3. Initialize SHM and named semaphores using a single initialization semaphore (O_CREAT safe).
-    shm_init_sem_ptr = sem_open(SEM_SHM_INIT_NAME, O_CREAT, 0666, 1);
-    if (shm_init_sem_ptr == SEM_FAILED)
-    {
-        perror("Server: Error creating/opening SHM initialization semaphore");
-        cleanup_ipc_resources();
-        exit(1);
-    }
+    // Inizializza i membri della SHM (solo all'avvio)
+    shm_ptr->max_workers = MAX_WORKERS_DEFAULT;
+    shm_ptr->current_workers = 0;
+    shm_ptr->scheduling_algo = initial_scheduling_algo;
+    shm_ptr->pending_requests_count = 0;
 
-    sem_wait(shm_init_sem_ptr); // Acquire semaphore for initialization
 
-    // Check if shared memory is being initialized for the first time
-    int first_init = (shm_ptr->max_workers == 0);
+    // Inizializza semafori nominati (SEMPRE dopo aver pulito con unlink)
+    worker_limit_sem_ptr = sem_open(SEM_WORKER_LIMIT_NAME, O_CREAT, 0666, MAX_WORKERS_DEFAULT);
+    if (worker_limit_sem_ptr == SEM_FAILED) { perror("Server: Errore sem_open worker_limit_sem"); cleanup_ipc_resources(); exit(1); }
+    printf("Server: Semaforo '%s' creato/aperto con valore iniziale %d.\n", SEM_WORKER_LIMIT_NAME, MAX_WORKERS_DEFAULT);
 
-    if (first_init)
-    {
-        printf("Server: Initializing shared memory and opening named semaphores.\n");
-        // Open/create named semaphores. They will always be newly created here.
-        worker_limit_sem_ptr = sem_open(SEM_WORKER_LIMIT_NAME, O_CREAT, 0666, MAX_WORKERS_DEFAULT);
-        queue_mutex_ptr = sem_open(SEM_QUEUE_MUTEX_NAME, O_CREAT, 0666, 1);
-        queue_fill_sem_ptr = sem_open(SEM_QUEUE_FILL_NAME, O_CREAT, 0666, 0);
 
-        if (worker_limit_sem_ptr == SEM_FAILED || queue_mutex_ptr == SEM_FAILED || queue_fill_sem_ptr == SEM_FAILED)
-        {
-            perror("Server: Error opening/creating named semaphores");
-            sem_post(shm_init_sem_ptr); // Release initialization semaphore
-            cleanup_ipc_resources();
-            exit(1);
-        }
+    queue_mutex_ptr = sem_open(SEM_QUEUE_MUTEX_NAME, O_CREAT, 0666, 1);
+    if (queue_mutex_ptr == SEM_FAILED) { perror("Server: Errore sem_open queue_mutex_sem"); cleanup_ipc_resources(); exit(1); }
+    printf("Server: Semaforo '%s' creato/aperto.\n", SEM_QUEUE_MUTEX_NAME);
 
-        shm_ptr->max_workers = MAX_WORKERS_DEFAULT;
-        shm_ptr->current_workers = 0;
-        shm_ptr->scheduling_algo = initial_scheduling_algo;
-        shm_ptr->pending_requests_count = 0;
-        // No queue_head/tail needed for the simplified array queue
-        shm_ptr->file_data_current_size = 0;
-        shm_ptr->file_data_client_pid = 0;
-        memset(shm_ptr->file_data_filename, 0, sizeof(shm_ptr->file_data_filename));
-    }
-    else
-    {
-        printf("Server: Shared memory already initialized. Opening existing semaphores.\n");
-        // If SHM exists, open existing semaphores without O_CREAT (initial cleanup prevents conflicts).
-        worker_limit_sem_ptr = sem_open(SEM_WORKER_LIMIT_NAME, 0); // 0 for not creating
-        queue_mutex_ptr = sem_open(SEM_QUEUE_MUTEX_NAME, 0);
-        queue_fill_sem_ptr = sem_open(SEM_QUEUE_FILL_NAME, 0);
 
-        if (worker_limit_sem_ptr == SEM_FAILED || queue_mutex_ptr == SEM_FAILED || queue_fill_sem_ptr == SEM_FAILED)
-        {
-            perror("Server: Error opening existing named semaphores");
-            sem_post(shm_init_sem_ptr); // Release initialization semaphore
-            cleanup_ipc_resources();
-            exit(1);
-        }
-    }
-    sem_post(shm_init_sem_ptr); // Release initialization semaphore
-    // We don't close shm_init_sem_ptr here, it will be closed and unlinked in cleanup_ipc_resources.
+    queue_fill_sem_ptr = sem_open(SEM_QUEUE_FILL_NAME, O_CREAT, 0666, 0);
+    if (queue_fill_sem_ptr == SEM_FAILED) { perror("Server: Errore sem_open queue_fill_sem"); cleanup_ipc_resources(); exit(1); }
+    printf("Server: Semaforo '%s' creato/aperto.\n", SEM_QUEUE_FILL_NAME);
 
-    printf("Server: Waiting for requests (Worker limit: %d)...\n", shm_ptr->max_workers);
+    printf("Server: Inizializzazione SHM e semafori completata. Limite worker: %d.\n", shm_ptr->max_workers);
+    printf("Server: In attesa di richieste...\n");
 
-    // Buffer to receive messages of different types
+    // Buffer per ricevere messaggi di diversi tipi
     union
     {
         long mtype;
@@ -581,146 +597,171 @@ int main(int argc, char *argv[])
         struct StatusRequestMessage status_req;
     } msg_buffer;
 
-    while (1)
+    while (!server_should_exit) // Loop principale del server
     {
         ssize_t bytes_received;
-        // Receive any type of message, handle EINTR
-        do
-        {
-            bytes_received = msgrcv(server_msqid, &msg_buffer, sizeof(msg_buffer) - sizeof(long), 0, 0);
-        } while (bytes_received == -1 && errno == EINTR);
+        // Ricevi qualsiasi tipo di messaggio, gestisci EINTR e EIDRM (coda rimossa)
+        bytes_received = msgrcv(server_msqid, &msg_buffer, sizeof(msg_buffer) - sizeof(long), 0, 0);
 
         if (bytes_received == -1)
         {
-            perror("Server: Critical error receiving message");
-            // For a critical error (not EINTR), you might want to exit or log more severely
-            continue;
+            if (errno == EINTR)
+            {
+                if (server_should_exit) {
+                    printf("Server: msgrcv interrotto da segnale, terminazione richiesta.\n");
+                    break; // Esci dal loop se il segnale indica di terminare
+                }
+                printf("Server: msgrcv interrotto da segnale, riprovo.\n");
+                continue; // Un'interruzione transitoria, riprova
+            }
+            else if (errno == EIDRM) // Coda di messaggi rimossa
+            {
+                printf("Server: La coda messaggi del server è stata rimossa. Terminazione...\n");
+                server_should_exit = 1;
+                break;
+            }
+            else
+            {
+                perror("Server: Errore critico nella ricezione del messaggio");
+                server_should_exit = 1; // Un errore non recuperabile, esci
+                break;
+            }
         }
+        //printf("Server: Messaggio ricevuto (tipo: %ld, dimensione: %zd byte).\n", msg_buffer.mtype, bytes_received);
 
         switch (msg_buffer.mtype)
         {
         case MSG_TYPE_REQUEST:
         {
             struct RequestMessage *request = &msg_buffer.req;
-            printf("Server: Received request from PID %d for file '%s' (size: %zu bytes).\n",
+            printf("Server: Ricevuta richiesta da PID %d per file '%s' (dimensione: %zu byte).\n",
                    request->client_pid, request->filename, request->file_size);
 
-            // Acquire mutex to protect access to SHM buffer and queue
-            sem_wait(queue_mutex_ptr);
-
-            // --- IMPORTANT FIX: Read file data into SHM buffer ---
-            int fd = open(request->filename, O_RDONLY);
-            if (fd == -1)
-            {
-                perror("Server: Error opening file for processing");
-                sem_post(queue_mutex_ptr); // Release mutex
-                // Send error response to client
-                key_t client_mq_key = request->client_pid;
-                int client_msqid_resp = msgget(client_mq_key, 0666);
-                if (client_msqid_resp != -1)
-                {
-                    struct ResponseMessage response;
-                    response.mtype = MSG_TYPE_RESPONSE;
-                    strcpy(response.content, "ERROR: FILE_NOT_FOUND_OR_ACCESSIBLE");
-                    msgsnd(client_msqid_resp, &response, sizeof(struct ResponseMessage) - sizeof(long), 0);
-                }
-                continue; // Skip to next message
-            }
-
-            // Check if file size exceeds MAX_FILE_SIZE
+            // Controlla se la dimensione del file supera MAX_FILE_SIZE (prima di accodare)
             if (request->file_size > MAX_FILE_SIZE)
             {
-                fprintf(stderr, "Server: Error: File '%s' (size %zu bytes) exceeds MAX_FILE_SIZE (%d bytes). Request discarded.\n", request->filename, request->file_size, MAX_FILE_SIZE);
-                close(fd);
-                sem_post(queue_mutex_ptr); // Release mutex
-                // Send error response to client
-                key_t client_mq_key = request->client_pid;
-                int client_msqid_resp = msgget(client_mq_key, 0666);
+                fprintf(stderr, "Server: Errore: Il file '%s' (dimensione %zu byte) supera MAX_FILE_SIZE (%d byte). Richiesta scartata.\n", request->filename, request->file_size, MAX_FILE_SIZE);
+                // Invia risposta di errore al client
+                int client_msqid_resp = msgget(request->client_pid, 0666);
                 if (client_msqid_resp != -1)
                 {
                     struct ResponseMessage response;
                     response.mtype = MSG_TYPE_RESPONSE;
-                    strcpy(response.content, "ERROR: FILE_TOO_LARGE");
+                    // Calcola la lunghezza massima del nome del file
+                    const char* error_prefix = "ERROR: File '";
+                    const char* error_suffix = "' too large.";
+                    size_t max_filename_len = sizeof(response.content) - strlen(error_prefix) - strlen(error_suffix) - 1; // -1 for null terminator
+
+                    snprintf(response.content, sizeof(response.content), "%s%.*s%s",
+                             error_prefix, (int)max_filename_len, request->filename, error_suffix);
                     msgsnd(client_msqid_resp, &response, sizeof(struct ResponseMessage) - sizeof(long), 0);
                 }
-                continue; // Skip to next message
+                continue; // Salta al prossimo messaggio
             }
 
-            ssize_t bytes_read = read(fd, shm_ptr->file_data_buffer, request->file_size);
-            close(fd);
-
-            if (bytes_read == -1 || (size_t)bytes_read != request->file_size)
-            {
-                perror("Server: Error reading file into shared memory buffer");
-                sem_post(queue_mutex_ptr); // Release mutex
-                // Send error response to client
-                key_t client_mq_key = request->client_pid;
-                int client_msqid_resp = msgget(client_mq_key, 0666);
-                if (client_msqid_resp != -1)
-                {
+            // --- Logica di gestione worker e coda ---
+            // 1. Aspetta un posto disponibile per un worker (blocca se max_workers sono attivi)
+            printf("Server: Attesa di un posto worker disponibile...\n");
+            if (sem_wait(worker_limit_sem_ptr) == -1) {
+                if (errno == EINTR) {
+                    if (server_should_exit) break; // Server sta terminando
+                    continue; // Altrimenti riprova
+                }
+                perror("Server: Errore in sem_wait(worker_limit_sem_ptr)");
+                // Invia risposta di errore al client
+                int client_msqid_resp = msgget(request->client_pid, 0666);
+                if (client_msqid_resp != -1) {
                     struct ResponseMessage response;
                     response.mtype = MSG_TYPE_RESPONSE;
-                    strcpy(response.content, "ERROR: FILE_READ_FAILED");
+                    snprintf(response.content, sizeof(response.content), "ERROR: Server internal error on worker limit.");
                     msgsnd(client_msqid_resp, &response, sizeof(struct ResponseMessage) - sizeof(long), 0);
                 }
-                continue; // Skip to next message
+                continue;
+            }
+            printf("Server: Posto worker acquisito.\n");
+
+            // 2. Acquisisci mutex per proteggere l'accesso alla coda
+            if (sem_wait(queue_mutex_ptr) == -1) {
+                 if (errno == EINTR) {
+                    if (server_should_exit) {sem_post(worker_limit_sem_ptr); break;} // Server sta terminando, rilascia worker_limit
+                    sem_post(worker_limit_sem_ptr); // Rilascia worker_limit prima di continuare in caso di errore.
+                    continue; // Altrimenti riprova
+                }
+                perror("Server: Errore in sem_wait(queue_mutex_ptr)");
+                sem_post(worker_limit_sem_ptr); // Rilascia il permesso worker se non possiamo accedere alla coda
+                 // Invia risposta di errore al client
+                int client_msqid_resp = msgget(request->client_pid, 0666);
+                if (client_msqid_resp != -1) {
+                    struct ResponseMessage response;
+                    response.mtype = MSG_TYPE_RESPONSE;
+                    snprintf(response.content, sizeof(response.content), "ERROR: Server internal error on queue mutex.");
+                    msgsnd(client_msqid_resp, &response, sizeof(struct ResponseMessage) - sizeof(long), 0);
+                }
+                continue;
             }
 
-            // Update SHM metadata for the file
-            shm_ptr->file_data_current_size = (size_t)bytes_read;
-            shm_ptr->file_data_client_pid = request->client_pid;
-            strncpy(shm_ptr->file_data_filename, request->filename, sizeof(shm_ptr->file_data_filename) - 1);
-            shm_ptr->file_data_filename[sizeof(shm_ptr->file_data_filename) - 1] = '\0';
-
-            // Add the request to the queue
+            // 3. Aggiungi la richiesta alla coda
             if (enqueue_request(request) == 0)
             {
-                printf("Server: Request from PID %d enqueued. Pending requests: %d.\n", request->client_pid, shm_ptr->pending_requests_count);
-                sem_post(queue_mutex_ptr);    // Release mutex
-                sem_post(queue_fill_sem_ptr); // Signal that a request is in the queue
-
-                // Try to acquire the worker limit semaphore
-                // This will block if the maximum worker limit has been reached
-                sem_wait(worker_limit_sem_ptr);
-
-                // Semaphore acquired, we can create a new worker
-                sem_wait(queue_mutex_ptr); // Protect current_workers
+                // Incrementa i worker attivi (protetto dal mutex della coda)
                 shm_ptr->current_workers++;
-                printf("Server: Creating new worker. Active workers: %d.\n", shm_ptr->current_workers);
-                sem_post(queue_mutex_ptr);
+                printf("Server: Richiesta da PID %d accodata. Richieste in sospeso: %d. Worker attivi: %d/%d.\n",
+                       request->client_pid, shm_ptr->pending_requests_count, shm_ptr->current_workers, shm_ptr->max_workers);
+                sem_post(queue_mutex_ptr);    // Rilascia mutex
+                sem_post(queue_fill_sem_ptr); // Segnala che una richiesta è nella coda per i worker
 
+                // 4. Crea un nuovo processo worker
                 pid_t pid = fork();
                 if (pid == -1)
                 {
-                    perror("Server: Error forking worker process");
-                    sem_wait(queue_mutex_ptr); // Protect current_workers
+                    perror("Server: Errore nel forking del processo worker");
+                    // Se il fork fallisce, dobbiamo annullare tutte le modifiche:
+                    //   - Decrementare current_workers (sotto mutex)
+                    //   - Rilasciare worker_limit_sem_ptr
+                    //   - Decrementare queue_fill_sem_ptr (la richiesta rimane in coda ma non verrà elaborata subito)
+                    sem_wait(queue_mutex_ptr);
                     shm_ptr->current_workers--;
+                    printf("Server: Errore fork, worker attivi: %d/%d.\n", shm_ptr->current_workers, shm_ptr->max_workers);
                     sem_post(queue_mutex_ptr);
-                    sem_post(worker_limit_sem_ptr); // Release semaphore if fork fails
+                    sem_post(worker_limit_sem_ptr); // Rilascia il permesso worker
+                    sem_wait(queue_fill_sem_ptr); // "Consuma" il post che è stato fatto per la richiesta accodata non elaborata
+                    
+                    // Invia risposta di errore al client
+                    int client_msqid_resp = msgget(request->client_pid, 0666);
+                    if (client_msqid_resp != -1) {
+                        struct ResponseMessage response;
+                        response.mtype = MSG_TYPE_RESPONSE;
+                        snprintf(response.content, sizeof(response.content), "ERROR: Server failed to spawn worker.");
+                        msgsnd(client_msqid_resp, &response, sizeof(struct ResponseMessage) - sizeof(long), 0);
+                    }
                 }
                 else if (pid == 0)
                 {
-                    // Child process code (worker)
+                    // Codice del processo figlio (worker)
+                    // Il figlio non dovrebbe gestire i segnali del padre
+                    signal(SIGINT, SIG_DFL); // Resetta SIGINT al default nel figlio
+                    signal(SIGCHLD, SIG_DFL); // Resetta SIGCHLD al default nel figlio
                     worker_process();
-                    // Worker terminates with exit(0) or exit(1)
+                    // Il worker termina con exit(0) o exit(1)
                 }
                 else
                 {
-                    // Parent process code (main server)
-                    // Continue main loop to receive new requests
+                    // Codice del processo padre (server principale)
+                    // Continua il loop principale per ricevere nuove richieste
                 }
             }
-            else
+            else // Errore nell'accodamento (coda piena)
             {
-                sem_post(queue_mutex_ptr); // Release mutex if queue is full
-                // Send an error message to the client if the queue is full
-                key_t client_mq_key = request->client_pid;
-                int client_msqid_resp = msgget(client_mq_key, 0666);
+                sem_post(queue_mutex_ptr); // Rilascia mutex (nonostante l'errore)
+                sem_post(worker_limit_sem_ptr); // Rilascia il permesso worker che non è stato utilizzato
+
+                // Invia un messaggio di errore al client se la coda è piena
+                int client_msqid_resp = msgget(request->client_pid, 0666);
                 if (client_msqid_resp != -1)
                 {
                     struct ResponseMessage response;
                     response.mtype = MSG_TYPE_RESPONSE;
-                    strcpy(response.content, "ERROR: SERVER_QUEUE_FULL");
+                    snprintf(response.content, sizeof(response.content), "ERROR: Server queue is full.");
                     msgsnd(client_msqid_resp, &response, sizeof(struct ResponseMessage) - sizeof(long), 0);
                 }
             }
@@ -729,57 +770,87 @@ int main(int argc, char *argv[])
         case MSG_TYPE_CONTROL:
         {
             struct ControlMessage *control = &msg_buffer.ctrl;
-            sem_wait(queue_mutex_ptr); // Protect access to max_workers
-            int old_max_workers = shm_ptr->max_workers;
-            shm_ptr->max_workers = control->new_max_workers;
-            printf("Server: Max worker limit updated from %d to %d.\n", old_max_workers, shm_ptr->max_workers);
+            sem_wait(queue_mutex_ptr); // Proteggi l'accesso a max_workers e regolazione semaforo
 
-            // If the new limit is greater, post to the semaphore to allow more workers
-            for (int i = 0; i < shm_ptr->max_workers - old_max_workers; i++)
-            {
-                sem_post(worker_limit_sem_ptr);
+            int old_max_workers = shm_ptr->max_workers;
+            int new_max_workers = control->new_max_workers;
+
+            if (new_max_workers <= 0) {
+                fprintf(stderr, "Server: Avviso: Nuovo limite worker non valido (%d). Deve essere > 0.\n", new_max_workers);
+                sem_post(queue_mutex_ptr);
+                break;
             }
+
+            printf("Server: Limite massimo worker aggiornato da %d a %d.\n", old_max_workers, new_max_workers);
+
+            // Regola il valore del semaforo worker_limit_sem_ptr
+            if (new_max_workers < old_max_workers) {
+                int diff = old_max_workers - new_max_workers;
+                // Tentiamo di decrementare il semaforo per il numero di worker da "spegnere".
+                // Se il valore corrente è già basso, sem_trywait fallirà, il che è accettabile.
+                // I worker in eccesso semplicemente non saranno ripristinati.
+                for (int i = 0; i < diff; i++) {
+                    if (sem_trywait(worker_limit_sem_ptr) == 0) {
+                        printf("Server: Decrementato semaforo worker_limit per ridurre limite.\n");
+                    } else {
+                        // Non possiamo decrementare ulteriormente, probabilmente già a 0 o meno worker attivi del nuovo limite.
+                        break;
+                    }
+                }
+            }
+            else if (new_max_workers > old_max_workers) {
+                int diff = new_max_workers - old_max_workers;
+                // Incrementiamo il semaforo per il numero di nuovi worker consentiti.
+                for (int i = 0; i < diff; i++) {
+                    sem_post(worker_limit_sem_ptr);
+                    printf("Server: Incrementato semaforo worker_limit per aumentare limite.\n");
+                }
+            }
+            
+            shm_ptr->max_workers = new_max_workers; // Aggiorna la variabile condivisa dopo aver regolato il semaforo
+
             sem_post(queue_mutex_ptr);
             break;
         }
         case MSG_TYPE_STATUS_REQ:
         {
             struct StatusRequestMessage *status_req = &msg_buffer.status_req;
-            sem_wait(queue_mutex_ptr); // Protect access to counters
+            sem_wait(queue_mutex_ptr); // Proteggi l'accesso ai contatori
             int pending = shm_ptr->pending_requests_count;
             int active = shm_ptr->current_workers;
             int max_w = shm_ptr->max_workers;
             char *sched_algo_name = (shm_ptr->scheduling_algo == SCHED_FCFS) ? "FCFS" : "SJF";
             sem_post(queue_mutex_ptr);
 
-            key_t client_mq_key = status_req->client_pid;
-            int client_msqid_resp = msgget(client_mq_key, 0666);
+            // Ottieni la coda del client (il client deve averla creata con la sua PID come chiave)
+            int client_msqid_resp = msgget(status_req->client_pid, 0666);
             if (client_msqid_resp == -1)
             {
-                perror("Server: Error retrieving client message queue for status");
+                perror("Server: Errore nel recuperare la coda messaggi del client per lo stato");
             }
             else
             {
                 struct ResponseMessage response;
                 response.mtype = MSG_TYPE_RESPONSE;
                 snprintf(response.content, sizeof(response.content),
-                         "Status: Pending=%d, Active=%d/%d, Sched=%s",
+                         "Stato: RichiesteInCoda=%d, WorkerAttivi=%d/%d, Schedulazione=%s",
                          pending, active, max_w, sched_algo_name);
                 if (msgsnd(client_msqid_resp, &response, sizeof(struct ResponseMessage) - sizeof(long), 0) == -1)
                 {
-                    perror("Server: Error sending status response to client");
+                    perror("Server: Errore nell'invio della risposta di stato al client");
                 }
             }
-            printf("Server: Sent status to PID %d.\n", status_req->client_pid);
+            printf("Server: Stato inviato a PID %d.\n", status_req->client_pid);
             break;
         }
         default:
-            fprintf(stderr, "Server: Unknown message type received: %ld\n", msg_buffer.mtype);
+            fprintf(stderr, "Server: Tipo di messaggio sconosciuto ricevuto: %ld (dimensione: %zd byte).\n", msg_buffer.mtype, bytes_received);
             break;
         }
     }
 
-    // Cleanup happens via SIGINT handler.
-    cleanup_ipc_resources();
+    printf("Server: Ciclo principale terminato. Avvio pulizia finale...\n");
+    cleanup_ipc_resources(); // Pulisci tutte le risorse IPC all'uscita
+
     return 0;
 }

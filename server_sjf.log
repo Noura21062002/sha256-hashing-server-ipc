@@ -1,0 +1,142 @@
+Server: Avvio processo server (PID: 54546).
+Server: Scheduling impostato su SJF (Shortest Job First).
+Server: Coda messaggi server creata/ottenuta con ID: 196680
+Server: Memoria condivisa attaccata con ID: 98347
+Server: Semaforo '/server_worker_limit_sem' creato/aperto con valore iniziale 5.
+Server: Semaforo '/server_queue_mutex_sem' creato/aperto.
+Server: Semaforo '/server_queue_fill_sem' creato/aperto.
+Server: Inizializzazione SHM e semafori completata. Limite worker: 5.
+Server: In attesa di richieste...
+Server: Limite massimo worker aggiornato da 5 a 2.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Ricevuta richiesta da PID 54571 per file 'test/large_file_1.bin' (dimensione: 215040 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54571 accodata. Richieste in sospeso: 1. Worker attivi: 1/2.
+Worker PID 54576: Elaborazione richiesta per file: 'test/small_file_1.bin' (dimensione: 1024 byte) da client PID: 54572.
+Worker PID 54576: Elaborazione completata per 'test/small_file_1.bin'. Hash: d1318e89f0733c3357fec60b4bd0cfb103ab945f7906cca18ecaba576fa959ec
+Server: Avvio processo server (PID: 54546).
+Server: Scheduling impostato su SJF (Shortest Job First).
+Server: Coda messaggi server creata/ottenuta con ID: 196680
+Server: Memoria condivisa attaccata con ID: 98347
+Server: Semaforo '/server_worker_limit_sem' creato/aperto con valore iniziale 5.
+Server: Semaforo '/server_queue_mutex_sem' creato/aperto.
+Server: Semaforo '/server_queue_fill_sem' creato/aperto.
+Server: Inizializzazione SHM e semafori completata. Limite worker: 5.
+Server: In attesa di richieste...
+Server: Limite massimo worker aggiornato da 5 a 2.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Ricevuta richiesta da PID 54571 per file 'test/large_file_1.bin' (dimensione: 215040 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54571 accodata. Richieste in sospeso: 1. Worker attivi: 1/2.
+Server: Ricevuta richiesta da PID 54572 per file 'test/small_file_1.bin' (dimensione: 1024 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Coda riordinata per SJF. Prossimo file: 'test/small_file_1.bin' (dim: 1024)
+Server: Richiesta da PID 54572 accodata. Richieste in sospeso: 2. Worker attivi: 2/2.
+Worker PID 54577: Elaborazione richiesta per file: 'test/large_file_1.bin' (dimensione: 215040 byte) da client PID: 54571.
+Worker PID 54577: Elaborazione completata per 'test/large_file_1.bin'. Hash: 699806f8f0305a20661091405f4fec55119a6982d9b81c212ee8c05ffe7a3a41
+Server: Avvio processo server (PID: 54546).
+Server: Scheduling impostato su SJF (Shortest Job First).
+Server: Coda messaggi server creata/ottenuta con ID: 196680
+Server: Memoria condivisa attaccata con ID: 98347
+Server: Semaforo '/server_worker_limit_sem' creato/aperto con valore iniziale 5.
+Server: Semaforo '/server_queue_mutex_sem' creato/aperto.
+Server: Semaforo '/server_queue_fill_sem' creato/aperto.
+Server: Inizializzazione SHM e semafori completata. Limite worker: 5.
+Server: In attesa di richieste...
+Server: Limite massimo worker aggiornato da 5 a 2.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Ricevuta richiesta da PID 54571 per file 'test/large_file_1.bin' (dimensione: 215040 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54571 accodata. Richieste in sospeso: 1. Worker attivi: 1/2.
+Server: Ricevuta richiesta da PID 54572 per file 'test/small_file_1.bin' (dimensione: 1024 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Coda riordinata per SJF. Prossimo file: 'test/small_file_1.bin' (dim: 1024)
+Server: Richiesta da PID 54572 accodata. Richieste in sospeso: 2. Worker attivi: 2/2.
+Server: Ricevuta richiesta da PID 54573 per file 'test/medium_file_1.bin' (dimensione: 61440 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54573 accodata. Richieste in sospeso: 1. Worker attivi: 3/2.
+Worker PID 54578: Elaborazione richiesta per file: 'test/medium_file_1.bin' (dimensione: 61440 byte) da client PID: 54573.
+Worker PID 54578: Elaborazione completata per 'test/medium_file_1.bin'. Hash: 0195a44d7b1c3fc3ad373dd0838a8d8e93383a93f400b332b09b0fdc36efe438
+Server: Avvio processo server (PID: 54546).
+Server: Scheduling impostato su SJF (Shortest Job First).
+Server: Coda messaggi server creata/ottenuta con ID: 196680
+Server: Memoria condivisa attaccata con ID: 98347
+Server: Semaforo '/server_worker_limit_sem' creato/aperto con valore iniziale 5.
+Server: Semaforo '/server_queue_mutex_sem' creato/aperto.
+Server: Semaforo '/server_queue_fill_sem' creato/aperto.
+Server: Inizializzazione SHM e semafori completata. Limite worker: 5.
+Server: In attesa di richieste...
+Server: Limite massimo worker aggiornato da 5 a 2.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Ricevuta richiesta da PID 54571 per file 'test/large_file_1.bin' (dimensione: 215040 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54571 accodata. Richieste in sospeso: 1. Worker attivi: 1/2.
+Server: Ricevuta richiesta da PID 54572 per file 'test/small_file_1.bin' (dimensione: 1024 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Coda riordinata per SJF. Prossimo file: 'test/small_file_1.bin' (dim: 1024)
+Server: Richiesta da PID 54572 accodata. Richieste in sospeso: 2. Worker attivi: 2/2.
+Server: Ricevuta richiesta da PID 54573 per file 'test/medium_file_1.bin' (dimensione: 61440 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54573 accodata. Richieste in sospeso: 1. Worker attivi: 3/2.
+Server: Ricevuta richiesta da PID 54574 per file 'test/large_file_2.bin' (dimensione: 225280 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Processo worker PID 54576 terminato. Worker attivi: 2.
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54574 accodata. Richieste in sospeso: 1. Worker attivi: 3/2.
+Worker PID 54579: Elaborazione richiesta per file: 'test/large_file_2.bin' (dimensione: 225280 byte) da client PID: 54574.
+Worker PID 54579: Elaborazione completata per 'test/large_file_2.bin'. Hash: 9d65990b0a24df8eb4cbf1f2063295fa858afc7fdc81c52f8ed0fc7039b2368d
+Server: Avvio processo server (PID: 54546).
+Server: Scheduling impostato su SJF (Shortest Job First).
+Server: Coda messaggi server creata/ottenuta con ID: 196680
+Server: Memoria condivisa attaccata con ID: 98347
+Server: Semaforo '/server_worker_limit_sem' creato/aperto con valore iniziale 5.
+Server: Semaforo '/server_queue_mutex_sem' creato/aperto.
+Server: Semaforo '/server_queue_fill_sem' creato/aperto.
+Server: Inizializzazione SHM e semafori completata. Limite worker: 5.
+Server: In attesa di richieste...
+Server: Limite massimo worker aggiornato da 5 a 2.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Decrementato semaforo worker_limit per ridurre limite.
+Server: Ricevuta richiesta da PID 54571 per file 'test/large_file_1.bin' (dimensione: 215040 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54571 accodata. Richieste in sospeso: 1. Worker attivi: 1/2.
+Server: Ricevuta richiesta da PID 54572 per file 'test/small_file_1.bin' (dimensione: 1024 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Coda riordinata per SJF. Prossimo file: 'test/small_file_1.bin' (dim: 1024)
+Server: Richiesta da PID 54572 accodata. Richieste in sospeso: 2. Worker attivi: 2/2.
+Server: Ricevuta richiesta da PID 54573 per file 'test/medium_file_1.bin' (dimensione: 61440 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54573 accodata. Richieste in sospeso: 1. Worker attivi: 3/2.
+Server: Ricevuta richiesta da PID 54574 per file 'test/large_file_2.bin' (dimensione: 225280 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Processo worker PID 54576 terminato. Worker attivi: 2.
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54574 accodata. Richieste in sospeso: 1. Worker attivi: 3/2.
+Server: Ricevuta richiesta da PID 54575 per file 'test/small_file_2.bin' (dimensione: 2048 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Processo worker PID 54577 terminato. Worker attivi: 2.
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54575 accodata. Richieste in sospeso: 1. Worker attivi: 3/2.
+Worker PID 54580: Elaborazione richiesta per file: 'test/small_file_2.bin' (dimensione: 2048 byte) da client PID: 54575.
+Worker PID 54580: Elaborazione completata per 'test/small_file_2.bin'. Hash: 2c12ba791877516768b1ec6a55907946c76878d5a6751658856aeb5eb902e415

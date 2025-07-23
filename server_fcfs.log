@@ -1,0 +1,115 @@
+Server: Avvio processo server (PID: 54506).
+Server: Scheduling impostato su FCFS (First-Come, First-Served).
+Server: Coda messaggi server creata/ottenuta con ID: 196609
+Server: Memoria condivisa attaccata con ID: 98346
+Server: Semaforo '/server_worker_limit_sem' creato/aperto con valore iniziale 5.
+Server: Semaforo '/server_queue_mutex_sem' creato/aperto.
+Server: Semaforo '/server_queue_fill_sem' creato/aperto.
+Server: Inizializzazione SHM e semafori completata. Limite worker: 5.
+Server: In attesa di richieste...
+Server: Ricevuta richiesta da PID 54514 per file 'test/large_file_1.bin' (dimensione: 215040 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54514 accodata. Richieste in sospeso: 1. Worker attivi: 1/5.
+Server: Ricevuta richiesta da PID 54515 per file 'test/small_file_1.bin' (dimensione: 1024 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54515 accodata. Richieste in sospeso: 2. Worker attivi: 2/5.
+Worker PID 54520: Elaborazione richiesta per file: 'test/small_file_1.bin' (dimensione: 1024 byte) da client PID: 54515.
+Worker PID 54520: Elaborazione completata per 'test/small_file_1.bin'. Hash: d1318e89f0733c3357fec60b4bd0cfb103ab945f7906cca18ecaba576fa959ec
+Server: Avvio processo server (PID: 54506).
+Server: Scheduling impostato su FCFS (First-Come, First-Served).
+Server: Coda messaggi server creata/ottenuta con ID: 196609
+Server: Memoria condivisa attaccata con ID: 98346
+Server: Semaforo '/server_worker_limit_sem' creato/aperto con valore iniziale 5.
+Server: Semaforo '/server_queue_mutex_sem' creato/aperto.
+Server: Semaforo '/server_queue_fill_sem' creato/aperto.
+Server: Inizializzazione SHM e semafori completata. Limite worker: 5.
+Server: In attesa di richieste...
+Server: Ricevuta richiesta da PID 54514 per file 'test/large_file_1.bin' (dimensione: 215040 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54514 accodata. Richieste in sospeso: 1. Worker attivi: 1/5.
+Worker PID 54519: Elaborazione richiesta per file: 'test/large_file_1.bin' (dimensione: 215040 byte) da client PID: 54514.
+Worker PID 54519: Elaborazione completata per 'test/large_file_1.bin'. Hash: 699806f8f0305a20661091405f4fec55119a6982d9b81c212ee8c05ffe7a3a41
+Server: Avvio processo server (PID: 54506).
+Server: Scheduling impostato su FCFS (First-Come, First-Served).
+Server: Coda messaggi server creata/ottenuta con ID: 196609
+Server: Memoria condivisa attaccata con ID: 98346
+Server: Semaforo '/server_worker_limit_sem' creato/aperto con valore iniziale 5.
+Server: Semaforo '/server_queue_mutex_sem' creato/aperto.
+Server: Semaforo '/server_queue_fill_sem' creato/aperto.
+Server: Inizializzazione SHM e semafori completata. Limite worker: 5.
+Server: In attesa di richieste...
+Server: Ricevuta richiesta da PID 54514 per file 'test/large_file_1.bin' (dimensione: 215040 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54514 accodata. Richieste in sospeso: 1. Worker attivi: 1/5.
+Server: Ricevuta richiesta da PID 54515 per file 'test/small_file_1.bin' (dimensione: 1024 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54515 accodata. Richieste in sospeso: 2. Worker attivi: 2/5.
+Server: Ricevuta richiesta da PID 54516 per file 'test/medium_file_1.bin' (dimensione: 61440 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54516 accodata. Richieste in sospeso: 3. Worker attivi: 3/5.
+Server: Ricevuta richiesta da PID 54517 per file 'test/large_file_2.bin' (dimensione: 225280 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54517 accodata. Richieste in sospeso: 4. Worker attivi: 4/5.
+Worker PID 54522: Elaborazione richiesta per file: 'test/large_file_2.bin' (dimensione: 225280 byte) da client PID: 54517.
+Worker PID 54522: Elaborazione completata per 'test/large_file_2.bin'. Hash: 9d65990b0a24df8eb4cbf1f2063295fa858afc7fdc81c52f8ed0fc7039b2368d
+Server: Avvio processo server (PID: 54506).
+Server: Scheduling impostato su FCFS (First-Come, First-Served).
+Server: Coda messaggi server creata/ottenuta con ID: 196609
+Server: Memoria condivisa attaccata con ID: 98346
+Server: Semaforo '/server_worker_limit_sem' creato/aperto con valore iniziale 5.
+Server: Semaforo '/server_queue_mutex_sem' creato/aperto.
+Server: Semaforo '/server_queue_fill_sem' creato/aperto.
+Server: Inizializzazione SHM e semafori completata. Limite worker: 5.
+Server: In attesa di richieste...
+Server: Ricevuta richiesta da PID 54514 per file 'test/large_file_1.bin' (dimensione: 215040 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54514 accodata. Richieste in sospeso: 1. Worker attivi: 1/5.
+Server: Ricevuta richiesta da PID 54515 per file 'test/small_file_1.bin' (dimensione: 1024 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54515 accodata. Richieste in sospeso: 2. Worker attivi: 2/5.
+Server: Ricevuta richiesta da PID 54516 per file 'test/medium_file_1.bin' (dimensione: 61440 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54516 accodata. Richieste in sospeso: 3. Worker attivi: 3/5.
+Worker PID 54521: Elaborazione richiesta per file: 'test/medium_file_1.bin' (dimensione: 61440 byte) da client PID: 54516.
+Worker PID 54521: Elaborazione completata per 'test/medium_file_1.bin'. Hash: 0195a44d7b1c3fc3ad373dd0838a8d8e93383a93f400b332b09b0fdc36efe438
+Server: Avvio processo server (PID: 54506).
+Server: Scheduling impostato su FCFS (First-Come, First-Served).
+Server: Coda messaggi server creata/ottenuta con ID: 196609
+Server: Memoria condivisa attaccata con ID: 98346
+Server: Semaforo '/server_worker_limit_sem' creato/aperto con valore iniziale 5.
+Server: Semaforo '/server_queue_mutex_sem' creato/aperto.
+Server: Semaforo '/server_queue_fill_sem' creato/aperto.
+Server: Inizializzazione SHM e semafori completata. Limite worker: 5.
+Server: In attesa di richieste...
+Server: Ricevuta richiesta da PID 54514 per file 'test/large_file_1.bin' (dimensione: 215040 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54514 accodata. Richieste in sospeso: 1. Worker attivi: 1/5.
+Server: Ricevuta richiesta da PID 54515 per file 'test/small_file_1.bin' (dimensione: 1024 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54515 accodata. Richieste in sospeso: 2. Worker attivi: 2/5.
+Server: Ricevuta richiesta da PID 54516 per file 'test/medium_file_1.bin' (dimensione: 61440 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54516 accodata. Richieste in sospeso: 3. Worker attivi: 3/5.
+Server: Ricevuta richiesta da PID 54517 per file 'test/large_file_2.bin' (dimensione: 225280 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54517 accodata. Richieste in sospeso: 4. Worker attivi: 4/5.
+Server: Ricevuta richiesta da PID 54518 per file 'test/small_file_2.bin' (dimensione: 2048 byte).
+Server: Attesa di un posto worker disponibile...
+Server: Posto worker acquisito.
+Server: Richiesta da PID 54518 accodata. Richieste in sospeso: 4. Worker attivi: 5/5.
+Worker PID 54523: Elaborazione richiesta per file: 'test/small_file_2.bin' (dimensione: 2048 byte) da client PID: 54518.
+Worker PID 54523: Elaborazione completata per 'test/small_file_2.bin'. Hash: 2c12ba791877516768b1ec6a55907946c76878d5a6751658856aeb5eb902e415
