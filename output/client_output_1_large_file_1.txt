@@ -1,0 +1,7 @@
+Client Hash: Starting for file 'test/large_file_1.bin'.
+Client Hash: Server message queue obtained with ID: 23
+Client Hash: Client message queue created with ID: 25 (key: 12250)
+Client Hash: Request sent to server. Waiting for response...
+Client Hash: Response from server received.
+Client Hash: SHA-256 received: 5bd28eff9027febc3177db7b093295d075587af8a8e87d6eb4c67e806a4e1ea2
+Client Hash: Cleanup completed.
