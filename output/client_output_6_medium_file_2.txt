@@ -1,7 +1,0 @@
-Client Hash: Starting for file 'test/medium_file_2.bin'.
-Client Hash: Server message queue obtained with ID: 23
-Client Hash: Client message queue created with ID: 30 (key: 12273)
-Client Hash: Request sent to server. Waiting for response...
-Client Hash: Response from server received.
-Client Hash: SHA-256 received: c88b32b00624ed31afc9002089451c384106858d0f46e022fc174170820c7f98
-Client Hash: Cleanup completed.
