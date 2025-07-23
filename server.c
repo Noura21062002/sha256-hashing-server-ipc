@@ -103,7 +103,7 @@ sem_t *queue_fill_sem_ptr = SEM_FAILED;
 volatile sig_atomic_t server_should_exit = 0;
 
 
-// --- Funzioni di Utilità per SHA-256 (usando le API EVP) ---
+// Funzioni di Utilità per SHA-256 (usando le API EVP)
 
 // Calcola SHA-256 di un buffer usando le API EVP (OpenSSL 3.0+)
 void digest_buffer(const char *buffer, size_t len, unsigned char *hash)
@@ -167,7 +167,7 @@ void bytes_to_hex(unsigned char *bytes, int len, char *hex_string)
     hex_string[len * 2] = '\0'; // Aggiungi terminatore nullo
 }
 
-// --- Funzioni di Gestione Coda ---
+// Funzioni di Gestione Coda
 
 // Aggiunge una richiesta alla coda (mutex già acquisito)
 // La coda è gestita come un array, sempre con il primo elemento come "head" logica.
@@ -233,7 +233,7 @@ int dequeue_request(RequestQueueEntry *entry)
     return 0;
 }
 
-// --- Funzioni di Pulizia Risorse IPC ---
+// Funzioni di Pulizia Risorse IPC
 
 // Funzione per la pulizia delle risorse IPC (coda messaggi, memoria condivisa, semafori).
 void cleanup_ipc_resources()
@@ -283,7 +283,7 @@ void cleanup_ipc_resources()
     printf("Server: Pulizia risorse IPC completata.\n");
 }
 
-// --- Gestore Segnali ---
+// Gestore Segnali
 
 // Gestore del segnale SIGCHLD per prevenire processi zombie.
 void sigchld_handler(int signo)
@@ -321,7 +321,7 @@ void sigint_handler(int signo)
     // Se msgrcv è bloccato, l'IPC_RMID lo sbloccherà con errno = EIDRM.
 }
 
-// --- Funzione Processo Worker ---
+// Funzione Processo Worker
 
 // Funzione eseguita da ogni processo worker figlio. Elabora una richiesta dalla coda,
 // calcola l'hash e invia la risposta.
@@ -380,7 +380,7 @@ void worker_process()
     printf("Worker PID %d: Elaborazione richiesta per file: '%s' (dimensione: %zu byte) da client PID: %d.\n",
            getpid(), current_request.filename, current_request.file_size, current_request.client_pid);
 
-    // --- Il worker legge il file direttamente dal disco ---
+    // Il worker legge il file direttamente dal disco 
     int fd = open(current_request.filename, O_RDONLY);
     if (fd == -1)
     {
@@ -474,7 +474,7 @@ void worker_process()
     exit(0); // Termina processo worker con successo
 }
 
-// --- Funzione Principale del Server ---
+// Funzione Principale del Server
 
 int main(int argc, char *argv[])
 {
@@ -659,7 +659,7 @@ int main(int argc, char *argv[])
                 continue; // Salta al prossimo messaggio
             }
 
-            // --- Logica di gestione worker e coda ---
+            // Logica di gestione worker e coda
             // 1. Aspetta un posto disponibile per un worker (blocca se max_workers sono attivi)
             printf("Server: Attesa di un posto worker disponibile...\n");
             if (sem_wait(worker_limit_sem_ptr) == -1) {

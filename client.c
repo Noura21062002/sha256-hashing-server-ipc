@@ -49,7 +49,7 @@ struct ResponseMessage
     char content[256]; // Hash SHA-256 o stringa di stato
 };
 
-// --- Funzioni di Utilità Client ---
+// Funzioni di Utilità Client
 
 // Invia una richiesta di hashing al server
 void send_hash_request(const char *filename)
@@ -200,7 +200,7 @@ void request_status()
     msgctl(client_msqid, IPC_RMID, NULL); // Rimuovi la coda messaggi del client
 }
 
-// --- Funzione Principale del Client ---
+// Funzione Principale del Client
 
 int main(int argc, char *argv[])
 {

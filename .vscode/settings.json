@@ -1,6 +1,7 @@
 {
     "files.associations": {
         "evp.h": "c",
-        "sha.h": "c"
+        "sha.h": "c",
+        "wait.h": "c"
     }
 }
